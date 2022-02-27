@@ -1,0 +1,12 @@
+[package]
+name = "controller"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glutin = "0.28.0"
+gl = "0.14.0"
+rand = "0.8.5"
+cube_model = {path="../cube_model"}
