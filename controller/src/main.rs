@@ -15,7 +15,7 @@ use rand::Rng;
 use std::process::Command;
 
 macro_rules! impl_shader{
-    ($t:ty, $vs:expr, $fs:expr $(,$field:ident), *) => {
+    ($t:ty, $vs:expr, $fs:expr $(,$field:ident)*) => {
         impl $t{
             fn init(&mut self) -> Result<(),String> {
                 unsafe {
@@ -105,8 +105,8 @@ macro_rules! impl_shader{
                 unsafe {
                     gl::UseProgram(shader.shader_id);
                     $(
-                        let uniform = gl::GetUniformLocation(shader_program, std::ffi::CString::new(stringify!($field)).unwrap().into_raw() as *const GLchar);
-                        self.$field = uniform;
+                        let uniform = gl::GetUniformLocation(shader.shader_id, std::ffi::CString::new(stringify!($field)).unwrap().into_raw() as *const GLchar);
+                        shader.$field = uniform;
                     )*
                 }
                 shader
@@ -118,35 +118,43 @@ macro_rules! impl_shader{
 const VERTEX_SHADER_SOURCE: &str = r#"
 #version 330 core
 layout (location = 0) in vec4 aPos;
-uniform mat4 face_transform;
-uniform mat4 offset;
-uniform mat4 transform;
+uniform mat4 u_face_transform;
+uniform mat4 u_offset;
+uniform mat4 u_transform;
 void main()
 {
-    gl_Position = aPos  * offset* face_transform * transform;
+    gl_Position = aPos  * u_offset * u_face_transform * u_transform;
 }
 "#;
 
 const FRAGMENT_SHADER_SOURCE: &str = r#"
 #version 330 core
 out vec4 FragColor;
-uniform vec3 color;
+uniform vec3 u_color;
 void main()
 {
    // Set the fragment color to the color passed from the vertex shader
-   FragColor = vec4(color, 1.0);
+   FragColor = vec4(u_color, 1.0);
 }
 "#;
 
 #[derive(Default)]
 struct CubeShader{
     shader_id: u32
-    ,u_face_transform: u32
-    ,u_offset: u32
-    ,u_transform: u32
+    ,u_face_transform: i32
+    ,u_offset: i32
+    ,u_transform: i32
+    ,u_color: i32
 }
 
-impl_shader!(CubeShader, VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
+impl_shader!(
+    CubeShader
+    ,VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE
+    ,u_face_transform
+    ,u_offset
+    ,u_transform
+    ,u_color
+);
 
 struct DataModel{
     d: f32
@@ -161,14 +169,10 @@ use glutin::PossiblyCurrent;
 struct RenderData{
     shader: CubeShader
     ,cube_verts: u32
-    ,transform: i32
-    ,offset: i32
     ,offset_mat: affine::Transform<f32>
     ,offset_subface_mat: affine::Transform<f32>
-    ,face_transform: i32
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
-    ,color: i32
     ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
     ,tc: TermCols
 }
@@ -215,79 +219,10 @@ fn main() {
         win
     };
 
+    let mut cube_shader = CubeShader::new();
+
     let mut gfx_objs = unsafe{ 
-    //let (shader_program, cube_verts, transform, color) = unsafe {
-        // Setup shader compilation checks
-        //let mut success = i32::from(gl::FALSE);
-        //let mut info_log = Vec::with_capacity(512);
-        //info_log.set_len(512 - 1); // -1 to skip trialing null character
-
-        //// Vertex shader
-        //let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-        //let c_str_vert = CString::new(VERTEX_SHADER_SOURCE.as_bytes()).unwrap();
-        //gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
-        //gl::CompileShader(vertex_shader);
-
-        //// Check for shader compilation errors
-        //gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
-        //if success != i32::from(gl::TRUE) {
-        //    gl::GetShaderInfoLog(
-        //        vertex_shader,
-        //        512,
-        //        ptr::null_mut(),
-        //        info_log.as_mut_ptr() as *mut GLchar,
-        //    );
-        //    println!(
-        //        "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
-        //        String::from_utf8_lossy(&info_log)
-        //    );
-        //}
-
-        //// Fragment shader
-        //let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-        //let c_str_frag = CString::new(FRAGMENT_SHADER_SOURCE.as_bytes()).unwrap();
-        //gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
-        //gl::CompileShader(fragment_shader);
-
-        //// Check for shader compilation errors
-        //gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
-        //if success != i32::from(gl::TRUE) {
-        //    gl::GetShaderInfoLog(
-        //        fragment_shader,
-        //        512,
-        //        ptr::null_mut(),
-        //        info_log.as_mut_ptr() as *mut GLchar,
-        //    );
-        //    println!(
-        //        "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
-        //        String::from_utf8_lossy(&info_log)
-        //    );
-        //}
-
-        //// Link Shaders
-        //let shader_program = gl::CreateProgram();
-        //gl::AttachShader(shader_program, vertex_shader);
-        //gl::AttachShader(shader_program, fragment_shader);
-        //gl::LinkProgram(shader_program);
-
-        //// Check for linking errors
-        //gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
-        //if success != i32::from(gl::TRUE) {
-        //    gl::GetProgramInfoLog(
-        //        shader_program,
-        //        512,
-        //        ptr::null_mut(),
-        //        info_log.as_mut_ptr() as *mut GLchar,
-        //    );
-        //    println!(
-        //        "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n{}",
-        //        String::from_utf8_lossy(&info_log)
-        //    );
-        //}
-        //gl::DeleteShader(vertex_shader);
-        //gl::DeleteShader(fragment_shader);
-
-        let mut cube_shader = CubeShader::new();
+    
 
         let offset = affine::Transform::<f32>::translate(0.0,0.0,-0.5);
         // a square
@@ -356,17 +291,9 @@ fn main() {
 
         gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         gl::BindVertexArray(0);
-
-        gl::UseProgram(cube_shader.shader_id);
-        // TODO string not deallocated? not really a problem if not, but could fix it.
-        let transform = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("transform").unwrap().into_raw() as *const GLchar);
-        let offset_u = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("offset").unwrap().into_raw() as *const GLchar);
-        let face_transform = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("face_transform").unwrap().into_raw() as *const GLchar);
-        let color = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("color").unwrap().into_raw() as *const GLchar);
-
+    
         gl::Enable(gl::DEPTH_TEST);
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
-
 
         let tc = TermCols{
             white: tput(|t|t.arg("setab").arg("15"))
@@ -383,15 +310,11 @@ fn main() {
         RenderData{
             shader: cube_shader
             ,cube_verts: cube_verts
-            ,transform: transform
-            ,offset: offset_u
             ,offset_mat: offset
             ,offset_subface_mat: offset_subface
-            ,face_transform: face_transform
             ,faces: face_transforms
             ,subfaces: subface_transforms
             ,window: gl_window
-            ,color: color
             ,tc: tc
         }
     };
@@ -458,36 +381,36 @@ fn main() {
             gl::UseProgram(gfx.shader.shader_id);
             gl::BindVertexArray(gfx.cube_verts);
             let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(state.r as f32), 0.0);
-            gl::UniformMatrix4fv(gfx.transform, 1, gl::FALSE, &transform.data[0] as *const GLfloat);
+            gl::UniformMatrix4fv(gfx.shader.u_transform, 1, gl::FALSE, &transform.data[0] as *const GLfloat);
 
             for i in 0..5{
-                gl::UniformMatrix4fv(gfx.offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
-                gl::Uniform3f(gfx.color, 0.0,0.0,0.0);
-                gl::UniformMatrix4fv(gfx.face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
+                gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
+                gl::Uniform3f(gfx.shader.u_color, 0.0,0.0,0.0);
+                gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
                 gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-                gl::UniformMatrix4fv(gfx.offset, 1, gl::FALSE, &gfx.offset_subface_mat.data[0] as *const GLfloat);
+                gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_subface_mat.data[0] as *const GLfloat);
                 let f = &state.cube.faces[i];
                 for j in 0..9{
                     let col = f.subfaces[j].color;
                     //println!("{:?}", col);
                     match col {
-                        cube::Colors::Red => gl::Uniform3f(gfx.color, 1.0,0.0,0.0),
-                        cube::Colors::Green => gl::Uniform3f(gfx.color, 0.0,1.0,0.0),
-                        cube::Colors::Orange => gl::Uniform3f(gfx.color, 1.0,0.6,0.2),
-                        cube::Colors::Blue => gl::Uniform3f(gfx.color, 0.0,0.0,1.0),
-                        cube::Colors::White => gl::Uniform3f(gfx.color, 1.0,1.0,1.0),
-                        cube::Colors::Yellow => gl::Uniform3f(gfx.color, 1.0,1.0,0.0),
+                        cube::Colors::Red => gl::Uniform3f(gfx.shader.u_color, 1.0,0.0,0.0),
+                        cube::Colors::Green => gl::Uniform3f(gfx.shader.u_color, 0.0,1.0,0.0),
+                        cube::Colors::Orange => gl::Uniform3f(gfx.shader.u_color, 1.0,0.6,0.2),
+                        cube::Colors::Blue => gl::Uniform3f(gfx.shader.u_color, 0.0,0.0,1.0),
+                        cube::Colors::White => gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,1.0),
+                        cube::Colors::Yellow => gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,0.0),
                     }
                     let sft = &gfx.subfaces[j];
-                    gl::UniformMatrix4fv(gfx.face_transform, 1, gl::FALSE, &((&gfx.faces[i] * sft).data[0]) as *const GLfloat);
+                    gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &((&gfx.faces[i] * sft).data[0]) as *const GLfloat);
                     gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
                 }
                 //println!("fdsfds");
             }
-            gl::Uniform3f(gfx.color, 1.0,1.0,1.0);
-            gl::UniformMatrix4fv(gfx.offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
+            gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,1.0);
+            gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
             for i in 0..5{
-                gl::UniformMatrix4fv(gfx.face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
+                gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
         }
