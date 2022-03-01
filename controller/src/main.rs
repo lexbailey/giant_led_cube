@@ -15,7 +15,7 @@ use rand::Rng;
 use std::process::Command;
 
 macro_rules! impl_shader{
-    ($t:ty, $vs:expr, $fs:expr $(,$field:ident)*) => {
+    ($t:ty, $vs:expr, $fs:expr $(,$field:ident:$kind:ident)*) => {
         impl $t{
             fn init(&mut self) -> Result<(),String> {
                 unsafe {
@@ -106,7 +106,7 @@ macro_rules! impl_shader{
                     gl::UseProgram(shader.shader_id);
                     $(
                         let uniform = gl::GetUniformLocation(shader.shader_id, std::ffi::CString::new(stringify!($field)).unwrap().into_raw() as *const GLchar);
-                        shader.$field = uniform;
+                        shader.$field = $kind::from(uniform);
                     )*
                 }
                 shader
@@ -138,22 +138,63 @@ void main()
 }
 "#;
 
+
+#[derive(Default)]
+struct UniformMat4{
+    id: i32
+}
+
+#[derive(Default)]
+struct UniformVec3{
+    id: i32
+}
+
+impl UniformMat4{
+    fn set(&self, data: &[f32;16]){
+        unsafe{
+            gl::UniformMatrix4fv(self.id, 1, gl::FALSE, &data[0] as *const GLfloat);
+        }
+    }
+}
+
+impl UniformVec3 {
+    fn set(&self, r:f32, g:f32, b:f32){
+        unsafe{
+            gl::Uniform3f(self.id, r, g, b);
+        }
+    }
+}
+
+macro_rules! uni_from {
+    ($u:ident) => {
+        impl From<i32> for $u{
+            fn from(id:i32) -> $u {
+                $u{id:id}
+            }
+        }
+    }
+}
+
+uni_from!(UniformMat4);
+uni_from!(UniformVec3);
+
+
 #[derive(Default)]
 struct CubeShader{
     shader_id: u32
-    ,u_face_transform: i32
-    ,u_offset: i32
-    ,u_transform: i32
-    ,u_color: i32
+    ,u_face_transform: UniformMat4
+    ,u_offset: UniformMat4
+    ,u_transform: UniformMat4
+    ,u_color: UniformVec3
 }
 
 impl_shader!(
     CubeShader
     ,VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE
-    ,u_face_transform
-    ,u_offset
-    ,u_transform
-    ,u_color
+    ,u_face_transform: UniformMat4
+    ,u_offset: UniformMat4
+    ,u_transform: UniformMat4
+    ,u_color: UniformVec3
 );
 
 struct DataModel{
@@ -169,8 +210,8 @@ use glutin::PossiblyCurrent;
 struct RenderData{
     shader: CubeShader
     ,cube_verts: u32
-    ,offset_mat: affine::Transform<f32>
-    ,offset_subface_mat: affine::Transform<f32>
+    ,offset: affine::Transform<f32>
+    ,offset_subface: affine::Transform<f32>
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
     ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
@@ -222,7 +263,6 @@ fn main() {
     let mut cube_shader = CubeShader::new();
 
     let mut gfx_objs = unsafe{ 
-    
 
         let offset = affine::Transform::<f32>::translate(0.0,0.0,-0.5);
         // a square
@@ -256,17 +296,10 @@ fn main() {
             affine::Transform::<f32>::translate(0.0, -0.33, 0.0),
             affine::Transform::<f32>::translate(0.33, -0.33, 0.0),
         ];
-        //let vertices: Vec<f32> = face_transforms.into_iter().map(|t|
-        //    (0..4).map(|a|affine::Vec4::<f32>{data:[
-        //        vertices[a*3]
-        //        ,vertices[(a*3)+1]
-        //        ,vertices[(a*3)+2]
-        //        ,1.0 // Extra 1 for 4-vectors, required for transforms to work
-        //    ]}.transform(&t).data).flatten().collect::<Vec<_>>()
-        //).flatten().collect();
 
         let mut vbo = 0;
         let mut cube_verts = 0;
+
         gl::GenVertexArrays(1, &mut cube_verts);
         gl::GenBuffers(1, &mut vbo);
 
@@ -310,8 +343,8 @@ fn main() {
         RenderData{
             shader: cube_shader
             ,cube_verts: cube_verts
-            ,offset_mat: offset
-            ,offset_subface_mat: offset_subface
+            ,offset: offset
+            ,offset_subface: offset_subface
             ,faces: face_transforms
             ,subfaces: subface_transforms
             ,window: gl_window
@@ -326,30 +359,6 @@ fn main() {
         ,cube: cube::Cube::new()
         ,frames: 0
     };
-
-    //state.cube.twist(cube::CENTER_LR, false);
-    //state.cube.twist(cube::CENTER_BT, false);
-    //state.cube.twist(cube::CENTER_LR, false);
-    //state.cube.twist(cube::CENTER_BT, false);
-    //state.cube.twist(cube::CENTER_LR, false);
-    //state.cube.twist(cube::CENTER_BT, false);
-    //state.cube.twist(cube::CENTER_LR, false);
-    //state.cube.twist(cube::CENTER_BT, false);
-
-    //state.cube.twist(cube::TOP, false);
-    //state.cube.twist(cube::BOTTOM, false);
-    //state.cube.twist(cube::BOTTOM, false);
-
-    //state.cube.twist(cube::RIGHT, false);
-    //state.cube.twist(cube::RIGHT, false);
-    //state.cube.twist(cube::LEFT, false);
-    //state.cube.twist(cube::LEFT, false);
-
-    //state.cube.twist(cube::FRONT, false);
-    //state.cube.twist(cube::FRONT, false);
-    //state.cube.twist(cube::BACK, false);
-    //state.cube.twist(cube::BACK, false);
-
     
     let target_fps = 30.0;
     let frame_dur_ms: f32 = 1000.0/target_fps;
@@ -381,36 +390,35 @@ fn main() {
             gl::UseProgram(gfx.shader.shader_id);
             gl::BindVertexArray(gfx.cube_verts);
             let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(state.r as f32), 0.0);
-            gl::UniformMatrix4fv(gfx.shader.u_transform, 1, gl::FALSE, &transform.data[0] as *const GLfloat);
+            gfx.shader.u_transform.set(&transform.data);
 
             for i in 0..5{
-                gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
-                gl::Uniform3f(gfx.shader.u_color, 0.0,0.0,0.0);
-                gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
+                gfx.shader.u_offset.set(&gfx.offset.data);
+                gfx.shader.u_color.set(0.0,0.0,0.0);
+                gfx.shader.u_face_transform.set(&gfx.faces[i].data);
                 gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-                gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_subface_mat.data[0] as *const GLfloat);
+                gfx.shader.u_offset.set(&gfx.offset_subface.data);
                 let f = &state.cube.faces[i];
                 for j in 0..9{
                     let col = f.subfaces[j].color;
                     //println!("{:?}", col);
                     match col {
-                        cube::Colors::Red => gl::Uniform3f(gfx.shader.u_color, 1.0,0.0,0.0),
-                        cube::Colors::Green => gl::Uniform3f(gfx.shader.u_color, 0.0,1.0,0.0),
-                        cube::Colors::Orange => gl::Uniform3f(gfx.shader.u_color, 1.0,0.6,0.2),
-                        cube::Colors::Blue => gl::Uniform3f(gfx.shader.u_color, 0.0,0.0,1.0),
-                        cube::Colors::White => gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,1.0),
-                        cube::Colors::Yellow => gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,0.0),
+                        cube::Colors::Red => gfx.shader.u_color.set(1.0,0.0,0.0),
+                        cube::Colors::Green => gfx.shader.u_color.set(0.0,1.0,0.0),
+                        cube::Colors::Orange => gfx.shader.u_color.set(1.0,0.6,0.2),
+                        cube::Colors::Blue => gfx.shader.u_color.set(0.0,0.0,1.0),
+                        cube::Colors::White => gfx.shader.u_color.set(1.0,1.0,1.0),
+                        cube::Colors::Yellow => gfx.shader.u_color.set(1.0,1.0,0.0),
                     }
                     let sft = &gfx.subfaces[j];
-                    gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &((&gfx.faces[i] * sft).data[0]) as *const GLfloat);
+                    gfx.shader.u_face_transform.set(&((&gfx.faces[i] * sft).data));
                     gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
                 }
-                //println!("fdsfds");
             }
-            gl::Uniform3f(gfx.shader.u_color, 1.0,1.0,1.0);
-            gl::UniformMatrix4fv(gfx.shader.u_offset, 1, gl::FALSE, &gfx.offset_mat.data[0] as *const GLfloat);
+            gfx.shader.u_color.set(1.0,1.0,1.0);
+            gfx.shader.u_offset.set(&gfx.offset.data);
             for i in 0..5{
-                gl::UniformMatrix4fv(gfx.shader.u_face_transform, 1, gl::FALSE, &gfx.faces[i].data[0] as *const GLfloat);
+                gfx.shader.u_face_transform.set(&gfx.faces[i].data);
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
         }
