@@ -14,6 +14,107 @@ use std::time::{Instant,Duration};
 use rand::Rng;
 use std::process::Command;
 
+macro_rules! impl_shader{
+    ($t:ty, $vs:expr, $fs:expr $(,$field:ident), *) => {
+        impl $t{
+            fn init(&mut self) -> Result<(),String> {
+                unsafe {
+                    // Setup shader compilation checks
+                    const LOG_MAX_LEN: usize = 512;
+                    let mut success = i32::from(gl::FALSE);
+                    let mut info_log = Vec::with_capacity(LOG_MAX_LEN);
+                    let mut log_len = 0i32;
+
+                    // Vertex shader
+                    let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+                    let c_str_vert = CString::new($vs.as_bytes()).unwrap();
+                    gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
+                    gl::CompileShader(vertex_shader);
+
+                    // Check for shader compilation errors
+                    gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
+                    if success != i32::from(gl::TRUE) {
+                        gl::GetShaderInfoLog(
+                            vertex_shader,
+                            LOG_MAX_LEN as i32,
+                            (&mut log_len) as *mut GLsizei,
+                            info_log.as_mut_ptr() as *mut GLchar,
+                        );
+                        return Err(format!(
+                            "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
+                            String::from_utf8_lossy(&info_log[0..(log_len as usize)])
+                        ));
+                    }
+
+                    // Fragment shader
+                    let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+                    let c_str_frag = CString::new($fs.as_bytes()).unwrap();
+                    gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
+                    gl::CompileShader(fragment_shader);
+
+                    // Check for shader compilation errors
+                    gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
+                    if success != i32::from(gl::TRUE) {
+                        gl::GetShaderInfoLog(
+                            fragment_shader,
+                            LOG_MAX_LEN as i32,
+                            (&mut log_len) as *mut GLsizei,
+                            info_log.as_mut_ptr() as *mut GLchar,
+                        );
+                        return Err(format!(
+                            "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
+                            String::from_utf8_lossy(&info_log[0..(log_len as usize)])
+                        ));
+                    }
+
+                    // Link Shaders
+                    let shader_program = gl::CreateProgram();
+                    gl::AttachShader(shader_program, vertex_shader);
+                    gl::AttachShader(shader_program, fragment_shader);
+                    gl::LinkProgram(shader_program);
+
+                    // Check for linking errors
+                    gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
+                    if success != i32::from(gl::TRUE) {
+                        gl::GetProgramInfoLog(
+                            shader_program,
+                            LOG_MAX_LEN as i32,
+                            (&mut log_len) as *mut GLsizei,
+                            info_log.as_mut_ptr() as *mut GLchar,
+                        );
+                        return Err(format!(
+                            "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n{}",
+                            String::from_utf8_lossy(&info_log[0..(log_len as usize)])
+                        ));
+                    }
+                    gl::DeleteShader(vertex_shader);
+                    gl::DeleteShader(fragment_shader);
+
+                    self.shader_id = shader_program;
+
+                    Ok(())
+                }
+            }
+
+            fn new() -> $t {
+                let mut shader:$t = Default::default();
+                match shader.init() {
+                    Err(msg) => panic!("Error when compiling shader: {}", msg)
+                    ,_ => ()
+                };
+                unsafe {
+                    gl::UseProgram(shader.shader_id);
+                    $(
+                        let uniform = gl::GetUniformLocation(shader_program, std::ffi::CString::new(stringify!($field)).unwrap().into_raw() as *const GLchar);
+                        self.$field = uniform;
+                    )*
+                }
+                shader
+            }
+        }
+    }
+}
+
 const VERTEX_SHADER_SOURCE: &str = r#"
 #version 330 core
 layout (location = 0) in vec4 aPos;
@@ -37,6 +138,16 @@ void main()
 }
 "#;
 
+#[derive(Default)]
+struct CubeShader{
+    shader_id: u32
+    ,u_face_transform: u32
+    ,u_offset: u32
+    ,u_transform: u32
+}
+
+impl_shader!(CubeShader, VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
+
 struct DataModel{
     d: f32
     ,r: f32
@@ -48,7 +159,7 @@ struct DataModel{
 use glutin::ContextWrapper;
 use glutin::PossiblyCurrent;
 struct RenderData{
-    shader: u32
+    shader: CubeShader
     ,cube_verts: u32
     ,transform: i32
     ,offset: i32
@@ -107,74 +218,76 @@ fn main() {
     let mut gfx_objs = unsafe{ 
     //let (shader_program, cube_verts, transform, color) = unsafe {
         // Setup shader compilation checks
-        let mut success = i32::from(gl::FALSE);
-        let mut info_log = Vec::with_capacity(512);
-        info_log.set_len(512 - 1); // -1 to skip trialing null character
+        //let mut success = i32::from(gl::FALSE);
+        //let mut info_log = Vec::with_capacity(512);
+        //info_log.set_len(512 - 1); // -1 to skip trialing null character
 
-        // Vertex shader
-        let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-        let c_str_vert = CString::new(VERTEX_SHADER_SOURCE.as_bytes()).unwrap();
-        gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
-        gl::CompileShader(vertex_shader);
+        //// Vertex shader
+        //let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
+        //let c_str_vert = CString::new(VERTEX_SHADER_SOURCE.as_bytes()).unwrap();
+        //gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
+        //gl::CompileShader(vertex_shader);
 
-        // Check for shader compilation errors
-        gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
-        if success != i32::from(gl::TRUE) {
-            gl::GetShaderInfoLog(
-                vertex_shader,
-                512,
-                ptr::null_mut(),
-                info_log.as_mut_ptr() as *mut GLchar,
-            );
-            println!(
-                "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
-                String::from_utf8_lossy(&info_log)
-            );
-        }
+        //// Check for shader compilation errors
+        //gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
+        //if success != i32::from(gl::TRUE) {
+        //    gl::GetShaderInfoLog(
+        //        vertex_shader,
+        //        512,
+        //        ptr::null_mut(),
+        //        info_log.as_mut_ptr() as *mut GLchar,
+        //    );
+        //    println!(
+        //        "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
+        //        String::from_utf8_lossy(&info_log)
+        //    );
+        //}
 
-        // Fragment shader
-        let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-        let c_str_frag = CString::new(FRAGMENT_SHADER_SOURCE.as_bytes()).unwrap();
-        gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
-        gl::CompileShader(fragment_shader);
+        //// Fragment shader
+        //let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
+        //let c_str_frag = CString::new(FRAGMENT_SHADER_SOURCE.as_bytes()).unwrap();
+        //gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
+        //gl::CompileShader(fragment_shader);
 
-        // Check for shader compilation errors
-        gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
-        if success != i32::from(gl::TRUE) {
-            gl::GetShaderInfoLog(
-                fragment_shader,
-                512,
-                ptr::null_mut(),
-                info_log.as_mut_ptr() as *mut GLchar,
-            );
-            println!(
-                "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
-                String::from_utf8_lossy(&info_log)
-            );
-        }
+        //// Check for shader compilation errors
+        //gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
+        //if success != i32::from(gl::TRUE) {
+        //    gl::GetShaderInfoLog(
+        //        fragment_shader,
+        //        512,
+        //        ptr::null_mut(),
+        //        info_log.as_mut_ptr() as *mut GLchar,
+        //    );
+        //    println!(
+        //        "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
+        //        String::from_utf8_lossy(&info_log)
+        //    );
+        //}
 
-        // Link Shaders
-        let shader_program = gl::CreateProgram();
-        gl::AttachShader(shader_program, vertex_shader);
-        gl::AttachShader(shader_program, fragment_shader);
-        gl::LinkProgram(shader_program);
+        //// Link Shaders
+        //let shader_program = gl::CreateProgram();
+        //gl::AttachShader(shader_program, vertex_shader);
+        //gl::AttachShader(shader_program, fragment_shader);
+        //gl::LinkProgram(shader_program);
 
-        // Check for linking errors
-        gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
-        if success != i32::from(gl::TRUE) {
-            gl::GetProgramInfoLog(
-                shader_program,
-                512,
-                ptr::null_mut(),
-                info_log.as_mut_ptr() as *mut GLchar,
-            );
-            println!(
-                "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n{}",
-                String::from_utf8_lossy(&info_log)
-            );
-        }
-        gl::DeleteShader(vertex_shader);
-        gl::DeleteShader(fragment_shader);
+        //// Check for linking errors
+        //gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
+        //if success != i32::from(gl::TRUE) {
+        //    gl::GetProgramInfoLog(
+        //        shader_program,
+        //        512,
+        //        ptr::null_mut(),
+        //        info_log.as_mut_ptr() as *mut GLchar,
+        //    );
+        //    println!(
+        //        "ERROR::SHADER::PROGRAM::COMPILATION_FAILED\n{}",
+        //        String::from_utf8_lossy(&info_log)
+        //    );
+        //}
+        //gl::DeleteShader(vertex_shader);
+        //gl::DeleteShader(fragment_shader);
+
+        let mut cube_shader = CubeShader::new();
 
         let offset = affine::Transform::<f32>::translate(0.0,0.0,-0.5);
         // a square
@@ -244,12 +357,12 @@ fn main() {
         gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         gl::BindVertexArray(0);
 
-        gl::UseProgram(shader_program);
+        gl::UseProgram(cube_shader.shader_id);
         // TODO string not deallocated? not really a problem if not, but could fix it.
-        let transform = gl::GetUniformLocation(shader_program, std::ffi::CString::new("transform").unwrap().into_raw() as *const GLchar);
-        let offset_u = gl::GetUniformLocation(shader_program, std::ffi::CString::new("offset").unwrap().into_raw() as *const GLchar);
-        let face_transform = gl::GetUniformLocation(shader_program, std::ffi::CString::new("face_transform").unwrap().into_raw() as *const GLchar);
-        let color = gl::GetUniformLocation(shader_program, std::ffi::CString::new("color").unwrap().into_raw() as *const GLchar);
+        let transform = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("transform").unwrap().into_raw() as *const GLchar);
+        let offset_u = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("offset").unwrap().into_raw() as *const GLchar);
+        let face_transform = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("face_transform").unwrap().into_raw() as *const GLchar);
+        let color = gl::GetUniformLocation(cube_shader.shader_id, std::ffi::CString::new("color").unwrap().into_raw() as *const GLchar);
 
         gl::Enable(gl::DEPTH_TEST);
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
@@ -268,7 +381,7 @@ fn main() {
 
         //(shader_program, cube_verts, transform, color);
         RenderData{
-            shader: shader_program
+            shader: cube_shader
             ,cube_verts: cube_verts
             ,transform: transform
             ,offset: offset_u
@@ -342,7 +455,7 @@ fn main() {
         unsafe {
             gl::ClearColor(state.d, 0.58, 0.92, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-            gl::UseProgram(gfx.shader);
+            gl::UseProgram(gfx.shader.shader_id);
             gl::BindVertexArray(gfx.cube_verts);
             let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(state.r as f32), 0.0);
             gl::UniformMatrix4fv(gfx.transform, 1, gl::FALSE, &transform.data[0] as *const GLfloat);
