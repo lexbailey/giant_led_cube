@@ -1,0 +1,15 @@
+
+command_name = @{ (ASCII_ALPHANUMERIC | "_")+ }
+
+hex_string = @{ ASCII_HEX_DIGIT+ }
+
+command_arg = @{ (!(","|".")~ANY)+ }
+
+command_args = { (command_arg ~ ",")* }
+
+mac = @{hex_string}
+salt = @{hex_string}
+
+checked_command = { command_name ~ ":" ~ command_args ~ salt }
+
+command = { checked_command ~ "#" ~ mac ~ "\n" }
