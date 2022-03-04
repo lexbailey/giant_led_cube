@@ -10,3 +10,4 @@ glutin = "0.28.0"
 gl = "0.14.0"
 rand = "0.8.5"
 cube_model = {path="../cube_model"}
+plain_authentic_commands = { path="../plain_authentic_commands" }

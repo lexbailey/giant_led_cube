@@ -238,6 +238,7 @@ dependencies = [
  "cube_model",
  "gl",
  "glutin",
+ "plain_authentic_commands",
  "rand",
 ]
 

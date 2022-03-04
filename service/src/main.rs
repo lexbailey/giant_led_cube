@@ -17,18 +17,15 @@ struct Args{
 }
 
 fn send_challenge<T: Write>(stream: &mut T, auth_state: &mut AuthState){
-    auth_state.step();
-    let msg = auth_state.construct_message("+challenge", &vec![]);
-    stream.write(msg.as_bytes());
 }
 
 enum ParseStatus {
-    Success()
+    Success(String, Vec<String>)
     ,BadClient()
     ,Unauthorised()
 }
 
-fn parse_command<T: Write>(cmd: &Vec<u8>, stream: &mut T, auth_state: &mut AuthState) -> ParseStatus{
+fn parse_command(cmd: &Vec<u8>, auth_state: &mut AuthState) -> ParseStatus{
     let s = std::str::from_utf8(cmd);
     if let Ok(cmd) = s {
         let result = CommandParser::parse(Rule::command, cmd);
@@ -44,27 +41,28 @@ fn parse_command<T: Write>(cmd: &Vec<u8>, stream: &mut T, auth_state: &mut AuthS
                     let checked_string = checked.as_str();
                     let mut checked = checked.into_inner();
                     let command_name = checked.next().unwrap().as_str();
-                    let command_args: Vec<&str> = checked.next().unwrap().into_inner().map(|a|a.as_str()).collect();
+                    let command_args: Vec<String> = checked.next().unwrap().into_inner().map(|a|a.as_str().to_string()).collect();
                     let msg_salt = checked.next().unwrap().as_str();
                     let mac = c.next().unwrap().as_str();
                     println!("Parsed command: name: {}, args: {:?}", command_name, command_args);
-                    if command_name == "next_challenge" {
+                    return if command_name == "next_challenge" {
                         // Don't check if this is authentic, challenges can be requested by anyone
-                        println!("Sending next challenge");
-                        send_challenge(stream, auth_state);
+                        ParseStatus::Success(command_name.to_string(), command_args)
                     }
                     else {
                         if auth_state.command_is_authentic(checked_string, msg_salt, mac){
                             auth_state.step();
-                            send_challenge(stream, auth_state);
+                            ParseStatus::Success(command_name.to_string(), command_args)
                         }
                         else{
-                            println!("Refusing to execute command: command is not authentic forcing this client to disconnect.");
-                            return ParseStatus::Unauthorised();
+                            ParseStatus::Unauthorised()
                         }
                     }
                 }
-                ParseStatus::Success()
+                // Strictly speaking this is an internal error, and this should be an unreachable!() instead of a BadClient
+                // but since this code is invoked by a network request, we don't want to panic if there's a bug here.
+                // Instead we just pretend the client is bad (which tbf it probably is if it exploited a bug in the server)
+                ParseStatus::BadClient()
             }
         }
     }
@@ -98,8 +96,23 @@ fn handle_stream<T: Write + Read>(stream:&mut T){
                         }
                         Some(i) => {
                             s.extend_from_slice(&section[0..=i]);
-                            match parse_command(&s, stream, &mut auth) {
-                                ParseStatus::Success() => ()
+                            match parse_command(&s, &mut auth) {
+                                ParseStatus::Success(command, args) => {
+                                    match command.as_ref() {
+                                        "next_challenge" => {
+                                            let msg = auth.construct_reply("challenge", &vec![]);
+                                            stream.write(msg.as_bytes());
+                                        }
+                                        ,"begin" => {
+                                            println!("Begin! ... a thing of some kind");
+                                        }
+                                        ,_=>{
+                                            let msg = auth.construct_reply("unknown_command", &vec![&command]);
+                                            stream.write(msg.as_bytes());
+                                        }
+                                    };
+                                }
+                                // Dont sign replies to messages that are not authorised. If we don't trust the source, we won't sign things for them
                                 ,ParseStatus::BadClient() => {stream.write(b"+malformed_command:a#a\n"); return;}
                                 ,ParseStatus::Unauthorised() => {stream.write(b"+auth_fail:a#a\n"); return;}
                             };

@@ -81,6 +81,10 @@ impl AuthState{
         self.authenticate_message(&message)
     }
 
+    pub fn construct_reply(&self, command: &str, args: &Vec<&str>) -> String{
+        self.construct_message(&("+".to_string() + command), args)
+    }
+
     pub fn signing_only(secret: Vec<u8>) -> AuthState {
         #[cfg(feature="challenge")]
         {Self::new(secret)}

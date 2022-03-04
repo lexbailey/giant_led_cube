@@ -18,6 +18,8 @@ mod gl_abstractions;
 use gl_abstractions as gla;
 use gla::{UniformMat4, UniformVec3};
 
+use plain_authentic_commands::{AuthState};
+
 shader_struct!{
     CubeShader
     ,r#"
