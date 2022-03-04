@@ -1,0 +1,16 @@
+[package]
+name = "plain_authentic_commands"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+challenge = ["rand_core", "rand_chacha"]
+
+[dependencies]
+pest = "2.0"
+pest_derive = "2.0"
+hex = "0.4.3"
+hmac = "0.12.1"
+sha2 = "0.10.2"
+rand_core = { version = "0.6.3", features = ["getrandom"], optional = true }
+rand_chacha = { version = "0.3.1", optional = true }
