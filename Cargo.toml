@@ -2,8 +2,10 @@
 resolver="2"
 members = [
     "cube_model",
+    "plain_authentic_commands",
     "controller",
     "device",
+    "service",
 ]
 
 # cargo build/run

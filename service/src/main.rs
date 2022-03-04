@@ -2,18 +2,9 @@ use clap::Parser as CLIParser;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::io::{Write,Read};
-use rand_core::{RngCore, SeedableRng, CryptoRng};
-use rand_chacha::{ChaCha20Rng};
-
+use plain_authentic_commands::{AuthState, CommandParser, Rule};
 extern crate pest;
-#[macro_use]
-extern crate pest_derive;
 use pest::Parser;
-
-use sha2::Sha256;
-use hmac::{Hmac, Mac};
-type HmacSha256 = Hmac<Sha256>;
-
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -25,66 +16,9 @@ struct Args{
     serial: Option<String>,
 }
 
-#[derive(Parser)]
-#[grammar = "command_parser.pest"]
-struct CommandParser;
-
-fn command_is_authentic(command: &str, auth_state: &AuthState, msg_salt: &str, given_mac: &str) -> bool{
-    if auth_state.salt != msg_salt{ return false; } // Didn't use the most recent challenge value
-    let given_mac = hex::decode(given_mac);
-    if given_mac.is_err(){return false;} // Mac is not even a valid hex string
-    let mut mac = HmacSha256::new_from_slice(&auth_state.secret).unwrap();
-    mac.update(command.as_bytes());
-    mac.verify_slice(&given_mac.unwrap()).is_ok()
-}
-
-fn authenticate_message(message: &str, auth_state: &AuthState) -> String{
-    let mut mac = HmacSha256::new_from_slice(&auth_state.secret).unwrap();
-    mac.update(message.as_bytes());
-    mac.update(auth_state.salt.as_bytes());
-    let sig = hex::encode(mac.finalize().into_bytes());
-    format!("{}{}#{}\n", message, auth_state.salt, sig)
-}
-
-struct GenericAuthState<Rng: RngCore + SeedableRng + CryptoRng>{
-    rng: Rng
-    ,salt: String
-    ,secret: Vec<u8>
-}
-
-type AuthState = GenericAuthState<ChaCha20Rng>;
-
-impl<Rng: RngCore + SeedableRng + CryptoRng> GenericAuthState<Rng>{
-    fn new(secret: Vec<u8>) -> GenericAuthState<Rng>{
-        let mut a = GenericAuthState{
-            rng: Rng::from_entropy()
-            ,salt: "".to_string()
-            ,secret: secret
-        };
-        a.step();
-        a
-    }
-
-    fn step(&mut self){
-        let mut bytes = [0;8];
-        self.rng.fill_bytes(&mut bytes);
-        self.salt = hex::encode(bytes);
-    }
-}
-
-fn construct_message(command: &str, args: &Vec<&str>, auth_state: &AuthState) -> String{
-    let mut arg_list = String::new();
-    for a in args{
-        arg_list.push_str(a);
-        arg_list.push(',');
-    }
-    let message = format!("{}:{}", command, arg_list);
-    authenticate_message(&message, auth_state)
-}
-
 fn send_challenge<T: Write>(stream: &mut T, auth_state: &mut AuthState){
     auth_state.step();
-    let msg = construct_message("+challenge", &vec![], auth_state);
+    let msg = auth_state.construct_message("+challenge", &vec![]);
     stream.write(msg.as_bytes());
 }
 
@@ -114,14 +48,13 @@ fn parse_command<T: Write>(cmd: &Vec<u8>, stream: &mut T, auth_state: &mut AuthS
                     let msg_salt = checked.next().unwrap().as_str();
                     let mac = c.next().unwrap().as_str();
                     println!("Parsed command: name: {}, args: {:?}", command_name, command_args);
-                    //println!("Check string: '{}' against mac: {}", checked_string, mac);
                     if command_name == "next_challenge" {
                         // Don't check if this is authentic, challenges can be requested by anyone
                         println!("Sending next challenge");
                         send_challenge(stream, auth_state);
                     }
                     else {
-                        if command_is_authentic(checked_string, auth_state, msg_salt, mac){
+                        if auth_state.command_is_authentic(checked_string, msg_salt, mac){
                             auth_state.step();
                             send_challenge(stream, auth_state);
                         }
