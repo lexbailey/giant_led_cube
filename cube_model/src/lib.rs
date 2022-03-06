@@ -1,6 +1,6 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Colors{
-    White, Red, Blue, Green, Yellow, Orange
+    White, Red, Blue, Green, Yellow, Orange, Blank
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +29,19 @@ impl Colors{
             Colors::Green => "G",
             Colors::Yellow => "Y",
             Colors::Orange => "O",
+            Colors::Blank => " ",
+        }
+    }
+
+    pub fn from_shortname(name: &str) -> Colors{
+        match name{
+            "W" => Colors::White,
+            "R" => Colors::Red,
+            "B" => Colors::Blue,
+            "G" => Colors::Green,
+            "Y" => Colors::Yellow,
+            "O" => Colors::Orange,
+            _ => Colors::Blank,
         }
     }
 }
@@ -148,6 +161,30 @@ impl Cube{
         Cube{faces:faces}
     }
 
+    pub fn deserialise(data: &str) -> Cube {
+        let mut c = Cube::new();
+        let mut i: usize = 0;
+        for face in &mut c.faces[0..6]{
+            for sface in &mut face.subfaces{
+                let col = Colors::from_shortname(&data[i..i+1]);
+                sface.color = col;
+                sface.next_color = col;
+                i+=1;
+            }
+        }
+        c
+    }
+
+    pub fn serialise(&self) -> String {
+        let mut s = String::with_capacity(54);
+        for face in &self.faces[0..6]{
+            for sface in face.subfaces{
+                s.push_str(sface.color.shortname());
+            }
+        }
+        s
+    }
+
     pub fn twist(&mut self, twist: Twist){
         let face = twist.face;
         let reverse = twist.reverse;
@@ -230,6 +267,21 @@ mod tests {
             let result = cube.simple_string();
             assert_eq!(result, expected.to_string());
         }
+    }
+
+    #[test]
+    fn ser_deser(){
+        use crate::{Twist, TOP};
+        let mut c = Cube::new();
+        c.twist(Twist{face:TOP, reverse:false});
+        let text = c.serialise();
+        assert_eq!(&text, "WWWWWWWWWBBBRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBYYYYYYYYY");
+        let mut c = Cube::deserialise(&text);
+        let text2 = c.serialise();
+        assert_eq!(&text, &text2);
+        c.twist(Twist{face:TOP, reverse:true});
+        let text = c.serialise();
+        assert_eq!(&text, "WWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYY");
     }
 }
 
