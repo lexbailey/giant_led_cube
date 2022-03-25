@@ -12,6 +12,6 @@ salt = @{hex_string}
 
 checked_command = { command_name ~ ":" ~ command_args ~ salt }
 
-command = { checked_command ~ "#" ~ mac ~ "\n" }
+command = { checked_command ~ "#" ~ mac }
 
-response = { "+" ~ command }
+response = { "+" ~ checked_command ~ "#" ~ mac }

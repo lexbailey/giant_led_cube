@@ -1,31 +1,57 @@
-//! This build script copies the `memory.x` file from the crate root into
-//! a directory where the linker can always find it at build time.
-//! For many projects this is optional, as the linker always searches the
-//! project root directory -- wherever `Cargo.toml` is. However, if you
-//! are using a workspace or have a more complicated build setup, this
-//! build script becomes required. Additionally, by requesting that
-//! Cargo re-run the build script whenever `memory.x` is changed,
-//! updating `memory.x` ensures a rebuild of the application with the
-//! new memory settings.
+// Copied from: https://michael-f-bryan.github.io/rust-ffi-guide/cbindgen.html
 
-use std::env;
-use std::fs::File;
-use std::io::Write;
+extern crate cbindgen;
+
+use std::{env, process::Command};
 use std::path::PathBuf;
+use cbindgen::{Config, Language};
 
 fn main() {
-    // Put `memory.x` in our output directory and ensure it's
-    // on the linker search path.
-    let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    File::create(out.join("memory.x"))
-        .unwrap()
-        .write_all(include_bytes!("memory.x"))
-        .unwrap();
-    println!("cargo:rustc-link-search={}", out.display());
+    // Run cbindgen
+    let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
-    // By default, Cargo will re-run a build script whenever
-    // any file in the project changes. By specifying `memory.x`
-    // here, we ensure the build script is only re-run when
-    // `memory.x` is changed.
-    println!("cargo:rerun-if-changed=memory.x");
+    let output_file = target_dir()
+        .join("include")
+        .join("cube_data.h")
+        .display()
+        .to_string();
+
+    let config = Config {
+        namespace: Some(String::from("ffi")),
+        language: Language::C,
+        include_guard: Some("CUBE_DATA_INCLUDE".into()),
+        ..Default::default()
+    };
+
+    cbindgen::generate_with_config(&crate_dir, config)
+      .unwrap()
+      .write_to_file(&output_file);
+
+    // Set GIT_VERSION environment variable
+    let git_hash_output = Command::new("git")
+        .args(&["rev-parse", "--short", "HEAD"])
+        .output()
+        .unwrap();
+    let git_hash = String::from_utf8(git_hash_output.stdout).unwrap();
+    let git_modified = Command::new("git")
+        .args(&["diff-index", "--quiet", "HEAD"])
+        .status()
+        .unwrap()
+        .code().unwrap() != 0;
+
+    let git_version = format!("{}{}", git_hash.trim(), if git_modified { "-modified" } else { "" });
+
+    println!("cargo:rustc-env=GIT_VERSION={}", git_version);
 }
+
+/// Find the location of the `target/` directory. Note that this may be 
+/// overridden by `cmake`, so we also need to check the `CARGO_TARGET_DIR` 
+/// variable.
+fn target_dir() -> PathBuf {
+    if let Ok(target) = env::var("CARGO_TARGET_DIR") {
+        PathBuf::from(target)
+    } else {
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("target")
+    }
+}
+

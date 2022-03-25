@@ -1,9 +1,12 @@
+#[cfg(feature="opengl")]
 extern crate gl;
+#[cfg(feature="opengl")]
 extern crate glutin;
 
 mod affine;
 use cube_model as cube;
 
+#[cfg(feature="opengl")]
 use gl::types::*;
 use std::mem;
 use std::ptr;
@@ -13,13 +16,22 @@ use std::ffi::CString;
 use std::time::{Instant,Duration};
 use rand::Rng;
 use std::process::Command;
+use std::cell::RefCell;
+use std::io::{self,Read,Write,BufRead,BufReader};
+use std::net::TcpStream;
+use std::sync::mpsc::{channel,Sender};
+use std::thread::{self,Thread,JoinHandle};
 
+#[cfg(feature="opengl")]
 mod gl_abstractions;
+#[cfg(feature="opengl")]
 use gl_abstractions as gla;
+#[cfg(feature="opengl")]
 use gla::{UniformMat4, UniformVec3};
 
-use plain_authentic_commands::{AuthState};
+use plain_authentic_commands::{MessageHandler, ParseStatus};
 
+#[cfg(feature="opengl")]
 shader_struct!{
     CubeShader
     ,r#"
@@ -52,6 +64,7 @@ shader_struct!{
 }
 
 struct DataModel{
+    // TODO move d, r, diff, and frames into the renderdata for the opengl version
     d: f32
     ,r: f32
     ,diff: f32
@@ -59,8 +72,140 @@ struct DataModel{
     ,frames: i32
 }
 
+trait Connector{
+    type Stream;
+    fn connect(addr: &str) -> std::io::Result<Self::Stream>;
+}
+
+struct Messenger<T: Read + Write, C: Connector>{
+    handler: MessageHandler
+    ,connector: C
+    ,address: String
+    ,stream: Option<T>
+}
+
+struct TcpConnector{
+}
+
+impl Connector for TcpConnector{
+    type Stream = TcpStream;
+    fn connect(addr: &str) -> std::io::Result<Self::Stream>{
+       TcpStream::connect(addr)
+    }
+}
+
+type TcpMessenger = Messenger<TcpStream, TcpConnector>;
+
+enum Event {
+    Response(Vec<u8>)
+    ,Command(String, Vec<String>)
+}
+
+fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
+    let mut reader = BufReader::new(stream);
+    for line in reader.split(b'\n'){
+        if let Ok(line) = line {
+            events.send(Event::Response(line));
+        }
+        else {
+            println!("Error: {:?}", line.err().unwrap());
+        }
+    }
+}
+
+impl<T: Read + Write> Messenger<T, TcpConnector>{
+    fn new(secret: Vec<u8>, address: &str) -> Messenger<T, TcpConnector>{
+        Messenger{
+            handler: MessageHandler::signing_only(secret)
+            ,connector: TcpConnector{}
+            ,address: address.to_string()
+            ,stream: None
+        }
+    }
+}
+
+impl<T: Read + Write, C: Connector<Stream=T>> Messenger<T, C>{
+    fn connect(&mut self) -> std::io::Result<()>{
+        let mut stream = C::connect(&self.address)?;
+        stream.write_all(b"next_challenge:a#a\n")?;
+        self.stream = Some(stream);
+        Ok(())
+    }
+
+    fn get_stream(&mut self) -> std::io::Result<&mut Option<T>>{
+        if self.stream.is_none(){
+            self.connect()?
+        }
+        Ok(&mut self.stream)
+    }
+
+    fn send_command(&mut self, command: &str, args: &Vec<&str>) -> std::io::Result<()>{
+        let message = self.handler.construct_message(command, args);
+        let s = self.get_stream()?.as_mut().unwrap();
+        s.write(message.as_bytes())?;
+        Ok(())
+    }
+}
+
+fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender<Event>)>{
+
+    let (sender, receiver) = channel();
+
+    // Split the sender into two
+    let CLI_sender = sender.clone();
+    let service_sender = sender;
+
+    let mut msg = TcpMessenger::new(b"secret".to_vec(), "localhost:9876");
+    msg.connect()?;
+
+    let mut reader = msg.stream.as_ref().unwrap().try_clone()?;
+
+    let net_thread = thread::spawn(move||{
+        handle_responses(&mut reader, service_sender);
+    });
+    
+    let event_thread = thread::spawn(move||{
+        for event in receiver.iter(){
+            match event {
+                Event::Response(s) => {
+                    match msg.handler.parse_response(&s) {
+                        ParseStatus::Success(response, args) => {
+                            match response.as_ref() {
+                                "challenge" => {
+                                    // do nothing
+                                }   
+                                ,r=>{
+                                    eprintln!("response: {}", r);
+                                }   
+                            };  
+                        }   
+                        ,ParseStatus::BadClient() => {
+                            eprintln!("Reply appears malformed");
+                            return;
+                        }
+                        ,ParseStatus::Unauthorised() => {
+                            eprintln!("Reply appears inauthentic");
+                            return;
+                        }
+                    };
+                }
+                ,Event::Command(command, args) => {
+                    println!("Send command: {}, {:?}", command, args);
+                    let args = args.iter().map(|a|a.as_ref()).collect();
+                    msg.send_command(&command, &args);
+                }
+            }
+        }
+    });
+    Ok((net_thread, event_thread, CLI_sender))
+}
+
+#[cfg(feature="opengl")]
 use glutin::ContextWrapper;
+#[cfg(feature="opengl")]
 use glutin::PossiblyCurrent;
+
+#[cfg(feature="opengl")]
 struct RenderData{
     shader: CubeShader
     ,cube_verts: u32
@@ -69,13 +214,10 @@ struct RenderData{
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
     ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
-    ,tc: TermCols
+    ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<()>>>
 }
 
-fn tput (f:fn (&mut Command)-> &mut Command) -> String {
-    String::from_utf8(f(&mut Command::new("tput")).output().expect("tput failed").stdout).unwrap()
-}
-
+#[cfg(feature="cli")]
 struct TermCols{
     white:String
     ,red:String
@@ -87,6 +229,17 @@ struct TermCols{
     ,fg_black:String
 }
 
+#[cfg(feature="cli")]
+struct RenderData{
+    tc: TermCols
+}
+
+#[cfg(feature="cli")]
+fn tput (f:fn (&mut Command)-> &mut Command) -> String {
+    String::from_utf8(f(&mut Command::new("tput")).output().expect("tput failed").stdout).unwrap()
+}
+
+#[cfg(feature="cli")]
 fn color_string(s: String, col: cube::Colors, tc: &TermCols) -> String {
     format!("{}{}{:03}{}", tc.fg_black, match col {
         cube::Colors::White => &tc.white
@@ -95,14 +248,13 @@ fn color_string(s: String, col: cube::Colors, tc: &TermCols) -> String {
         ,cube::Colors::Yellow => &tc.yellow
         ,cube::Colors::Blue => &tc.blue
         ,cube::Colors::Orange => &tc.orange
+        ,cube::Colors::Blank => ""
     }, s, tc.default)
 }
 
-fn nb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string(i.to_string(), f.subfaces[i].color, &tc) }
-fn bb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string("".to_string(), f.subfaces[i].color, &tc) }
 
-fn main() {
-    
+#[cfg(feature="opengl")]
+fn init_render_data_opengl() -> RenderData{
     let events_loop = glutin::event_loop::EventLoop::new();
     let window = glutin::window::WindowBuilder::new()
         .with_title("Big cube")
@@ -116,7 +268,7 @@ fn main() {
 
     let cube_shader = CubeShader::new();
 
-    let mut gfx_objs = unsafe{ 
+    let gfx_objs = unsafe{ 
 
         let offset = affine::Transform::<f32>::translate(0.0,0.0,-0.5);
         // a square
@@ -182,17 +334,6 @@ fn main() {
         gl::Enable(gl::DEPTH_TEST);
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
 
-        let tc = TermCols{
-            white: tput(|t|t.arg("setab").arg("15"))
-            ,red: tput(|t|t.arg("setab").arg("9"))
-            ,green: tput(|t|t.arg("setab").arg("10"))
-            ,yellow: tput(|t|t.arg("setab").arg("11"))
-            ,blue: tput(|t|t.arg("setab").arg("12"))
-            ,orange: tput(|t|t.arg("setab").arg("208"))
-            ,default: tput(|t|t.arg("sgr0"))
-            ,fg_black: tput(|t|t.arg("setaf").arg("0"))
-        };
-
         RenderData{
             shader: cube_shader
             ,cube_verts: cube_verts
@@ -201,47 +342,60 @@ fn main() {
             ,faces: face_transforms
             ,subfaces: subface_transforms
             ,window: gl_window
-            ,tc: tc
+            ,events_loop: RefCell::new(Some(events_loop))
         }
     };
+    gfx_objs
+}
 
-    let mut state = DataModel{
-        d: 0.0
-        ,r: 0.0
-        ,diff: 0.01
-        ,cube: cube::Cube::new()
-        ,frames: 0
+fn init_render_data_cli() -> RenderData{
+    let tc = TermCols{
+        white: tput(|t|t.arg("setab").arg("15"))
+        ,red: tput(|t|t.arg("setab").arg("9"))
+        ,green: tput(|t|t.arg("setab").arg("10"))
+        ,yellow: tput(|t|t.arg("setab").arg("11"))
+        ,blue: tput(|t|t.arg("setab").arg("12"))
+        ,orange: tput(|t|t.arg("setab").arg("208"))
+        ,default: tput(|t|t.arg("sgr0"))
+        ,fg_black: tput(|t|t.arg("setaf").arg("0"))
     };
-    
-    let target_fps = 30.0;
-    let frame_dur_ms: f32 = 1000.0/target_fps;
 
-    let mut last_frame_start = Instant::now();
+    RenderData{
+        tc: tc
+    }
+}
 
-    let frame_duration = Duration::from_millis(frame_dur_ms.floor() as u64);
+fn init_render_data() -> RenderData{
+    #[cfg(feature="opengl")]
+    {init_render_data_opengl()}
+    #[cfg(feature="cli")]
+    {init_render_data_cli()}
+}
 
-    fn update(state: &mut DataModel){
-        state.d += state.diff;
-        state.r += state.diff.abs()/2.0;
-        state.r %= 1.0;
-        state.frames += 1;
-        if state.d >= 1.0 {state.diff = -0.01;}
-        if state.d <= 0.0 {state.diff = 0.01;}
+#[cfg(feature="opengl")]
+fn ui_loop_opengl(mut gfx: RenderData, mut data: DataModel){
+    fn update(data: &mut DataModel){
+        data.d += data.diff;
+        data.r += data.diff.abs()/2.0;
+        data.r %= 1.0;
+        data.frames += 1;
+        if data.d >= 1.0 {data.diff = -0.01;}
+        if data.d <= 0.0 {data.diff = 0.01;}
         
-        if state.frames % 30 == 0{
+        if data.frames % 30 == 0{
             let face = rand::thread_rng().gen_range(0..6);
             let dir: i32 = rand::thread_rng().gen_range(0..2);
-            state.cube.twist(cube::Twist{face:face, reverse:dir==0});
+            data.cube.twist(cube::Twist{face:face, reverse:dir==0});
         }
     }
 
-    fn draw(state: &mut DataModel, gfx: &mut RenderData){
+    fn draw(data: &mut DataModel, gfx: &mut RenderData){
         unsafe {
-            gl::ClearColor(state.d, 0.58, 0.92, 1.0);
+            gl::ClearColor(data.d, 0.58, 0.92, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gfx.shader.use_();
             gl::BindVertexArray(gfx.cube_verts);
-            let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(state.r as f32), 0.0);
+            let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
             gfx.shader.u_transform.set(&transform.data);
 
             for i in 0..5{
@@ -250,7 +404,7 @@ fn main() {
                 gfx.shader.u_face_transform.set(&gfx.faces[i].data);
                 gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
                 gfx.shader.u_offset.set(&gfx.offset_subface.data);
-                let f = &state.cube.faces[i];
+                let f = &data.cube.faces[i];
                 for j in 0..9{
                     let col = f.subfaces[j].color;
                     //println!("{:?}", col);
@@ -276,19 +430,59 @@ fn main() {
         }
         gfx.window.swap_buffers().unwrap();
 
-        let ba = &state.cube.faces[cube::BACK];
-        let l = &state.cube.faces[cube::LEFT];
-        let t = &state.cube.faces[cube::TOP];
-        let r = &state.cube.faces[cube::RIGHT];
-        let bo = &state.cube.faces[cube::BOTTOM];
-        let f = &state.cube.faces[cube::FRONT];
+    }
+
+    let target_fps = 30.0;
+    let frame_dur_ms: f32 = 1000.0/target_fps;
+
+    let mut last_frame_start = Instant::now();
+
+    let frame_duration = Duration::from_millis(frame_dur_ms.floor() as u64);
+
+    use glutin::event::{Event, WindowEvent};
+    use glutin::event_loop::ControlFlow;
+    let events_loop = gfx.events_loop.take();
+    events_loop.unwrap().run(move |event, _win_target, cf|
+        match event {
+            //glutin::event::Event::WindowEvent{ event: glutin::event::WindowEvent::CloseRequested,..} => std::process::exit(0)
+            Event::WindowEvent{ event: WindowEvent::CloseRequested,..} => *cf = ControlFlow::Exit
+            ,Event::WindowEvent{ event: WindowEvent::Resized(newsize),..} => gfx.window.resize(newsize)
+            ,Event::RedrawRequested(_win) => {
+                draw(&mut data, &mut gfx);
+            }
+            ,Event::RedrawEventsCleared => {
+                let start = Instant::now();
+                update(&mut data);
+                draw(&mut data, &mut gfx);
+                *cf = ControlFlow::WaitUntil(last_frame_start+frame_duration); last_frame_start = start;
+            }
+            ,_ => ()
+        }
+    );
+
+}
+
+fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
+    use std::io::{self, BufRead, StdinLock, Write};
+    let stdin = io::stdin();
+    let mut user_input = stdin.lock().lines();
+    fn nb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string(i.to_string(), f.subfaces[i].color, &tc) }
+    fn bb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string("".to_string(), f.subfaces[i].color, &tc) }
+    fn draw(gfx: &RenderData, data: &DataModel){
+        let ba = &data.cube.faces[cube::BACK];
+        let l = &data.cube.faces[cube::LEFT];
+        let t = &data.cube.faces[cube::TOP];
+        let r = &data.cube.faces[cube::RIGHT];
+        let bo = &data.cube.faces[cube::BOTTOM];
+        let f = &data.cube.faces[cube::FRONT];
 
         let nb = |f,i|nb(f,i,&gfx.tc);
         let bb = |f,i|bb(f,i,&gfx.tc);
 
-        let clear = tput(|f|f.arg("clear"));
+        //let clear = tput(|f|f.arg("clear"));
 
-        println!("{}              Back", clear);
+        //println!("{}              Back", clear);
+        println!("              Back");
         println!("              ┏━━━━━━━━━━━━━┓");
         println!("              ┃ {} {} {} ┃", nb(ba, 8), nb(ba, 7), nb(ba, 6));
         println!("              ┃ {} {} {} ┃", bb(ba, 8), bb(ba, 7), bb(ba, 6));
@@ -320,23 +514,124 @@ fn main() {
         println!("              Front");
     }
 
-    use glutin::event::{Event, WindowEvent};
-    use glutin::event_loop::ControlFlow;
-    events_loop.run(move |event, _win_target, cf|
-        match event {
-            //glutin::event::Event::WindowEvent{ event: glutin::event::WindowEvent::CloseRequested,..} => std::process::exit(0)
-            Event::WindowEvent{ event: WindowEvent::CloseRequested,..} => *cf = ControlFlow::Exit
-            ,Event::WindowEvent{ event: WindowEvent::Resized(newsize),..} => gfx_objs.window.resize(newsize)
-            ,Event::RedrawRequested(_win) => {
-                draw(&mut state, &mut gfx_objs);
-            }
-            ,Event::RedrawEventsCleared => {
-                let start = Instant::now();
-                update(&mut state);
-                draw(&mut state, &mut gfx_objs);
-                *cf = ControlFlow::WaitUntil(last_frame_start+frame_duration); last_frame_start = start;
-            }
-            ,_ => ()
+    fn prompt(data: &mut DataModel, user_input: &mut std::io::Lines<StdinLock<'_>>) -> String{
+        print!("Cube control> ");
+        std::io::stdout().flush();
+        match user_input.next(){
+            None => {std::process::exit(0);}
+            Some(result) => {match result{
+                Err(e) => println!("Error: {:?}", e)
+                ,Ok(line) => return line
+            }}
         }
-    );
+        std::process::exit(1);
+    }
+
+    let mut sender: Option<Sender<Event>> = None;
+    let mut net_thread: Option<JoinHandle<()>> = None;
+    let mut event_thread: Option<JoinHandle<()>> = None;
+
+    fn send_command(sender: &Option<Sender<Event>>, command: &str, args: Vec<&str>){
+        if sender.is_none(){
+            println!("Not connected, please run `connect` command first.");
+            return;
+        }
+        let sender = sender.as_ref().unwrap();
+        match sender.send(Event::Command(command.to_string(), args.iter().map(|s|s.to_string()).collect())){
+            Ok(_) => {}
+            ,Err(e) => {println!("Failed to send command: {:?}", e);}
+        }
+    }
+
+    draw(&gfx, &data);
+    loop {
+        let command = prompt(&mut data, &mut user_input);
+        match command.as_ref(){
+            "connect" => {
+                if sender.is_some(){
+                    sender = None;
+                    net_thread.unwrap().join();
+                    net_thread = None;
+                    event_thread.unwrap().join();
+                    event_thread = None;
+                }
+                let result = start_service_threads();
+                match result{
+                    Err(e) => {
+                        println!("Error connecting to remote: {:?}", e);
+                    }
+                    Ok((new_net, new_events, new_sender)) => {
+                        sender = Some(new_sender);
+                        net_thread = Some(new_net);
+                        event_thread = Some(new_events);
+                        println!("Connected");
+                    }
+                }
+            }
+            ,"show" => {
+                draw(&gfx, &data);
+            }
+            ,"solved" => {
+                data.cube = cube_model::Cube::new();
+                send_command(&sender, "set_state", vec![&data.cube.serialise()]);
+                draw(&gfx, &data);
+            }
+            ,"detect leds" => {
+                println!("Starting LED detect sequence...");
+                send_command(&sender, "detect", vec!["leds"])
+            }
+            ,"detect paddles" => {
+                println!("Starting paddle detect sequence...");
+                send_command(&sender, "detect", vec!["paddles"])
+            }
+            ,"detect next" => {
+                println!("Next item...");
+                send_command(&sender, "detect", vec!["next"])
+            }
+            ,"" => {}
+            ,cmd => {
+                let mut parts = cmd.split(' ');
+                let name = parts.next().unwrap();
+                let args = &cmd[name.len()..cmd.len()];
+                match name.as_ref(){
+                    "twist" => {
+                        match data.cube.twists(args){
+                            Err(msg) => {println!("Error: {}", msg)}
+                            ,Ok(_) => {
+                                send_command(&sender, "set_state", vec![&data.cube.serialise()]);
+                                draw(&gfx, &data);
+                                println!("Done twists.");
+                            }
+                        }
+                    }
+                    ,_ => {println!("Unknown command: {}",cmd);}
+                }
+            }
+        }
+    }
+}
+
+fn ui_loop(mut gfx: RenderData, mut data: DataModel){
+    #[cfg(feature="opengl")]
+    ui_loop_opengl(gfx, data);
+    #[cfg(feature="cli")]
+    ui_loop_cli(gfx, data);
+}
+
+#[cfg(all(feature="cli", feature="opengl"))]
+compile_error!("Cannot compile with both the opengl interface _and_ the cli interface. Choose only one.");
+
+fn main() {
+    
+    let gfx = init_render_data();
+    
+    let mut data = DataModel{
+        d: 0.0
+        ,r: 0.0
+        ,diff: 0.01
+        ,cube: cube::Cube::new()
+        ,frames: 0
+    };
+    
+    ui_loop(gfx, data);
 }

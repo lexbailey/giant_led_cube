@@ -1,3 +1,5 @@
+#![cfg_attr(feature="without_std", no_std)]
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Colors{
     White, Red, Blue, Green, Yellow, Orange, Blank
@@ -84,6 +86,7 @@ impl Face{
         ]};
     }
 
+    #[cfg(not(feature="without_std"))]
     pub fn simple_string(&self) -> String{
         let f = &self.subfaces;
         format!("{}{}{}\n{}{}{}\n{}{}{}"
@@ -111,10 +114,79 @@ pub const CENTER_FB: usize = 6;
 pub const CENTER_LR: usize = 7;
 pub const CENTER_BT: usize = 8;
 
+// Represents any turn that is a single turn according to Quarter Slice Turn Metric
+// (This means that it can only represent 90-degree turns, and not 180-degree turns
+// and that it also does not represent full-cube rotations)
 #[derive(Copy, Clone, Debug)]
 pub struct Twist{
     pub face: usize
     ,pub reverse: bool
+}
+
+impl Twist{
+    pub fn from_string(s: &str) -> Result<Twist, &'static str>{
+        let s = s.as_bytes();
+        let l = s.len();
+        if l < 1 || l > 3 {
+            Err("Invalid twist string")
+        }
+        else{
+            let reverse = s[s.len()-1] == b'\'';
+            let face = match s[0] {
+                b'T'|b't' => Ok(TOP),
+                b'U'|b'u' => Ok(TOP),
+                b'F'|b'f' => Ok(FRONT),
+                b'L'|b'l' => Ok(LEFT),
+                b'B'|b'b' => match (l, reverse) {
+                    (1, false) | (2, true) => {Ok(BACK)},
+                    (2, false) | (3, true) => {
+                        match s[1] {
+                            b'A' => {Ok(BACK)},
+                            b'a' => {Ok(BACK)},
+                            b'O' => {Ok(BOTTOM)},
+                            b'o' => {Ok(BOTTOM)},
+                            _ => {Err("Invalid twist string")}
+                        }
+                    },
+                    _=>{Err("Invalid twist string")}
+                },
+                b'R'|b'r' => Ok(RIGHT),
+                b'D'|b'd' => Ok(BOTTOM),
+                b'S'|b's' => Ok(CENTER_FB),
+                b'M'|b'm' => Ok(CENTER_LR),
+                b'E'|b'e' => Ok(CENTER_BT),
+                _=> Err("Invalid twist string"),
+            }?;
+            Ok(Twist{
+                face: face
+                ,reverse: reverse
+            })
+        }
+    }
+
+    #[cfg(not(feature="without_std"))]
+    pub fn seq_from_string(s: &str) -> Result<Vec<Twist>, &'static str>{
+        let mut seq = Vec::new();
+        for m in s.split_whitespace(){
+            let l = m.len();
+            if l < 1{
+                // wut?
+            }
+            else{
+                let b = m.as_bytes();
+                let last = b[b.len()-1];
+                if last == b'2'{
+                    let t = Twist::from_string(&m[0..l-1])?;
+                    seq.push(t.clone());
+                    seq.push(t);
+                }
+                else{
+                    seq.push(Twist::from_string(m)?);
+                }
+            }
+        }
+        Ok(seq)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -161,10 +233,13 @@ impl Cube{
         Cube{faces:faces}
     }
 
-    pub fn deserialise(data: &str) -> Cube {
-        let mut c = Cube::new();
+    pub fn get_color(&self, f: Output) -> Colors{
+        self.faces[f.face].subfaces[f.subface].color
+    }
+
+    pub fn deserialise(&mut self, data: &str) {
         let mut i: usize = 0;
-        for face in &mut c.faces[0..6]{
+        for face in &mut self.faces[0..6]{
             for sface in &mut face.subfaces{
                 let col = Colors::from_shortname(&data[i..i+1]);
                 sface.color = col;
@@ -172,9 +247,9 @@ impl Cube{
                 i+=1;
             }
         }
-        c
     }
 
+    #[cfg(not(feature="without_std"))]
     pub fn serialise(&self) -> String {
         let mut s = String::with_capacity(54);
         for face in &self.faces[0..6]{
@@ -205,6 +280,7 @@ impl Cube{
         }
 
 
+        #[cfg(not(feature="without_std"))]
         for face in &self.faces{
             for s in &face.subfaces{
                 assert!(s.color == s.next_color);
@@ -212,6 +288,16 @@ impl Cube{
         }
     }
 
+    #[cfg(not(feature="without_std"))]
+    pub fn twists(&mut self, twists: &str) -> Result<(), &'static str>{
+        let t = Twist::seq_from_string(twists)?;
+        for t in t{
+            self.twist(t);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature="without_std"))]
     pub fn simple_string(&self) -> String{
         format!("Top:\n{}\nFront:\n{}\nLeft:\n{}\nBack:\n{}\nRight:\n{}\nBottom:\n{}"
             ,self.faces[TOP].simple_string()
@@ -224,14 +310,15 @@ impl Cube{
     }
 }
 
-type SwitchMap5Faces = [Twist;48];
+pub type SwitchMap5Faces = [Twist;48];
 
-type OutputMap5Faces = [Output;45];
+pub type OutputMap5Faces = [Output;45];
 
 #[cfg(test)]
 mod tests {
-    use crate::Cube;
+    use crate::{Cube, Twist, TOP, LEFT, CENTER_FB, BACK, BOTTOM, RIGHT};
 
+    #[cfg(not(feature="without_std"))]
     #[test]
     fn cube_init() {
         let cube = Cube::new();
@@ -239,6 +326,7 @@ mod tests {
         assert_eq!(result, "Top:\nWWW\nWWW\nWWW\nFront:\nRRR\nRRR\nRRR\nLeft:\nGGG\nGGG\nGGG\nBack:\nOOO\nOOO\nOOO\nRight:\nBBB\nBBB\nBBB\nBottom:\nYYY\nYYY\nYYY".to_string());
     }
 
+    #[cfg(not(feature="without_std"))]
     #[test]
     fn basic_twists() {
         use crate::ALL_TWISTS;
@@ -269,19 +357,78 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature="without_std"))]
     #[test]
     fn ser_deser(){
-        use crate::{Twist, TOP};
         let mut c = Cube::new();
         c.twist(Twist{face:TOP, reverse:false});
         let text = c.serialise();
         assert_eq!(&text, "WWWWWWWWWBBBRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBYYYYYYYYY");
-        let mut c = Cube::deserialise(&text);
+        let mut c = Cube::new();
+        c.deserialise(&text);
         let text2 = c.serialise();
         assert_eq!(&text, &text2);
         c.twist(Twist{face:TOP, reverse:true});
         let text = c.serialise();
         assert_eq!(&text, "WWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYY");
+    }
+
+    #[test]
+    fn parse_twists(){
+        let t = Twist::from_string("t'").unwrap();
+        assert_eq!(t.face, TOP);
+        assert_eq!(t.reverse, true);
+        let t = Twist::from_string("L").unwrap();
+        assert_eq!(t.face, LEFT);
+        assert_eq!(t.reverse, false);
+        let t = Twist::from_string("s'").unwrap();
+        assert_eq!(t.face, CENTER_FB);
+        assert_eq!(t.reverse, true);
+        let t = Twist::from_string("Ba'").unwrap();
+        assert_eq!(t.face, BACK);
+        assert_eq!(t.reverse, true);
+        let t = Twist::from_string("bO").unwrap();
+        assert_eq!(t.face, BOTTOM);
+        assert_eq!(t.reverse, false);
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn parse_twist_seq(){
+        let j_b_pll = Twist::seq_from_string("R U2 R' U' R U'2 L' U R' U'").unwrap();
+        let superflip1 = Twist::seq_from_string("U R2 F B R B2 R U2 L B2 R U' D' R2 F R' L B2 U2 F2").unwrap();
+        let superflip2 = Twist::seq_from_string("S U B2 D2 M D' M2 S U R2 D M2 U B2 U S2").unwrap();
+        // QSTM lengths:
+        assert_eq!(j_b_pll.len(), 12);
+        assert_eq!(superflip1.len(), 28);
+        assert_eq!(superflip2.len(), 23);
+        // Sequences
+        for (a,b) in j_b_pll.iter().zip(vec![
+                Twist{face:RIGHT, reverse: false},
+                Twist{face:TOP, reverse: false},
+                Twist{face:TOP, reverse: false},
+                Twist{face:RIGHT, reverse: true},
+                Twist{face:TOP, reverse: true},
+                Twist{face:RIGHT, reverse: false},
+                Twist{face:TOP, reverse: true},
+                Twist{face:TOP, reverse: true},
+                Twist{face:LEFT, reverse: true},
+                Twist{face:TOP, reverse: false},
+                Twist{face:RIGHT, reverse: true},
+                Twist{face:TOP, reverse: true},
+            ].iter()) {
+            assert_eq!(a.face,b.face);
+            assert_eq!(a.reverse,b.reverse);
+        }
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn do_twist_seq(){
+        let mut c = Cube::new();
+        let superflip = "S U B2 D2 M D' M2 S U R2 D M2 U B2 U S2";
+        c.twists(superflip);
+        assert_eq!(c.simple_string(), "Top:\nYBY\nRYO\nYGY\nFront:\nGYG\nRGO\nGWG\nLeft:\nRYR\nBRG\nRWR\nBack:\nBYB\nOBR\nBWB\nRight:\nOYO\nGOB\nOWO\nBottom:\nWBW\nOWR\nWGW")
     }
 }
 

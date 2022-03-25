@@ -3,11 +3,23 @@ name = "controller"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+opengl = ["gl", "glutin"]
+cli = []
+
+[[bin]]
+name = "cube_control_opengl"
+path = "src/main.rs"
+required-features = ["opengl"]
+
+[[bin]]
+name = "cube_control_cli"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
-glutin = "0.28.0"
-gl = "0.14.0"
+glutin = { version="0.28.0", optional=true }
+gl = { version="0.14.0", optional=true }
 rand = "0.8.5"
 cube_model = {path="../cube_model"}
 plain_authentic_commands = { path="../plain_authentic_commands" }

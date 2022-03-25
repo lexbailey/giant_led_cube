@@ -1,10 +1,13 @@
 use clap::Parser as CLIParser;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
-use std::io::{Write,Read};
-use plain_authentic_commands::{AuthState, CommandParser, Rule};
+use std::sync::mpsc::{channel,Sender,Receiver};
+use std::io::{Write,Read,BufReader,BufRead};
+use plain_authentic_commands::{MessageHandler, ParseStatus};
 extern crate pest;
 use pest::Parser;
+
+use cube_model::Cube;
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -16,123 +19,77 @@ struct Args{
     serial: Option<String>,
 }
 
-fn send_challenge<T: Write>(stream: &mut T, auth_state: &mut AuthState){
+enum ClientEvent{
+    SetState(String)
+    ,StartDetectLED()
 }
 
-enum ParseStatus {
-    Success(String, Vec<String>)
-    ,BadClient()
-    ,Unauthorised()
+enum Event{
+    Client(ClientEvent)
+    ,Device()
 }
 
-fn parse_command(cmd: &Vec<u8>, auth_state: &mut AuthState) -> ParseStatus{
-    let s = std::str::from_utf8(cmd);
-    if let Ok(cmd) = s {
-        let result = CommandParser::parse(Rule::command, cmd);
-        match result{
-            Err(cmd) => {
-                println!("Unparesable: Bad syntax: {}", cmd.to_string());
-                ParseStatus::BadClient()
-            }
-            ,Ok(cmd) => {
-                for c in cmd{
-                    let mut c = c.into_inner();
-                    let checked = c.next().unwrap();
-                    let checked_string = checked.as_str();
-                    let mut checked = checked.into_inner();
-                    let command_name = checked.next().unwrap().as_str();
-                    let command_args: Vec<String> = checked.next().unwrap().into_inner().map(|a|a.as_str().to_string()).collect();
-                    let msg_salt = checked.next().unwrap().as_str();
-                    let mac = c.next().unwrap().as_str();
-                    println!("Parsed command: name: {}, args: {:?}", command_name, command_args);
-                    return if command_name == "next_challenge" {
-                        // Don't check if this is authentic, challenges can be requested by anyone
-                        ParseStatus::Success(command_name.to_string(), command_args)
-                    }
-                    else {
-                        if auth_state.command_is_authentic(checked_string, msg_salt, mac){
-                            auth_state.step();
-                            ParseStatus::Success(command_name.to_string(), command_args)
-                        }
-                        else{
-                            ParseStatus::Unauthorised()
-                        }
-                    }
-                }
-                // Strictly speaking this is an internal error, and this should be an unreachable!() instead of a BadClient
-                // but since this code is invoked by a network request, we don't want to panic if there's a bug here.
-                // Instead we just pretend the client is bad (which tbf it probably is if it exploited a bug in the server)
-                ParseStatus::BadClient()
-            }
+struct LEDDetectState{
+    cur_led: usize
+    ,map: [Option<(usize, usize)>; 9*5] // five faces, tuple of face index and subface index
+}
+
+impl LEDDetectState{
+    fn new() -> LEDDetectState{
+        LEDDetectState{
+            cur_led: 0
+            ,map: [None; 9*5]
         }
     }
-    else{
-        println!("Unparseable: Command is not valid UTF8.");
-        ParseStatus::BadClient()
-    }
 }
 
-fn handle_stream<T: Write + Read>(stream:&mut T){
-    let mut s: Vec<u8> = Vec::with_capacity(200);
-    let mut auth: AuthState = AuthState::new(b"secret text".to_vec());
-    loop{
-        let mut buf: [u8;100] = [0;100];
-        let sz = stream.read(&mut buf);
-        match sz{
-            Ok(0) => {break;} // End of stream, client disconnected
-            ,Ok(n) => { // Got some bytes to read
-                println!("Read {} bytes: {}", n, String::from_utf8_lossy(&buf));
-                let mut j = 0;
-                loop{
-                    let section = &buf[j..n];
-                    match section.iter().position(|&c|c==b'\n'){
-                        None => {
-                            s.extend_from_slice(section);
-                            // If the remote is just sending unparseable garbage we'll just discard it instead of crashing
-                            if s.len() > 4000 {
-                                s.clear();
+fn handle_stream<R: Read, W: Write>(read_stream: &mut R, write_stream: &mut W, sender: &mut Sender<Event>){
+    let mut auth = MessageHandler::new(b"secret".to_vec());
+    let mut buffer = BufReader::new(read_stream);
+    for line_result in buffer.split(b'\n'){
+        match line_result {
+            Ok(line) => { // Got a line to read
+                match auth.parse_command(&line) {
+                    ParseStatus::Success(command, args) => {
+                        match command.as_ref() {
+                            "next_challenge" => {
+                                // Do nothing, command exists purely to cause a challenge to be sent
+                                // The next challenge is sent after each command anyway
                             }
-                            break;
-                        }
-                        Some(i) => {
-                            s.extend_from_slice(&section[0..=i]);
-                            match parse_command(&s, &mut auth) {
-                                ParseStatus::Success(command, args) => {
-                                    match command.as_ref() {
-                                        "next_challenge" => {
-                                            let msg = auth.construct_reply("challenge", &vec![]);
-                                            stream.write(msg.as_bytes());
-                                        }
-                                        ,"begin" => {
-                                            println!("Begin! ... a thing of some kind");
-                                        }
-                                        ,_=>{
-                                            let msg = auth.construct_reply("unknown_command", &vec![&command]);
-                                            stream.write(msg.as_bytes());
-                                        }
-                                    };
+                            ,"set_state" => {
+                                if args.len() >= 1{
+                                    println!("Set absolute cube state: {}", args[0]);
+                                    sender.send(Event::Client(ClientEvent::SetState(args[0].clone())));
                                 }
-                                // Dont sign replies to messages that are not authorised. If we don't trust the source, we won't sign things for them
-                                ,ParseStatus::BadClient() => {stream.write(b"+malformed_command:a#a\n"); return;}
-                                ,ParseStatus::Unauthorised() => {stream.write(b"+auth_fail:a#a\n"); return;}
-                            };
-                            s.clear();
-                            if i+1 >= n{
-                                break;
+                                else{
+                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                    write_stream.write(msg.as_bytes());
+                                }
                             }
-                            j += i+1;
-                        }
+                            ,"detect" => {
+                                println!("TODO: logic for detecting LED or switch sequence");
+                            }
+                            ,_=>{
+                                let msg = auth.construct_reply("unknown_command", &vec![&command]);
+                                write_stream.write(msg.as_bytes());
+                            }
+                        };
+                        auth.step();
+                        let msg = auth.construct_reply("challenge", &vec![&auth.get_salt()]);
+                        write_stream.write(msg.as_bytes());
                     }
-                }
+                    // Dont sign replies to messages that are not authorised. If we don't trust the source, we won't sign things for them
+                    ,ParseStatus::BadClient() => {write_stream.write(b"+malformed_command:a#a\n"); break;}
+                    ,ParseStatus::Unauthorised() => {write_stream.write(b"+auth_fail:a#a\n"); break;}
+                };
             }
             ,Err(e) => {
-                // Also the end of the stream, but less expectedly
                 println!("Unable to read from remote: {:?}", e);
                 break;
             }
         }
     }
-    println!("Client stream ended, disconnected.")
+    println!("Client stream ended, disconnected.");
 }
 
 fn main() {
@@ -150,36 +107,70 @@ fn main() {
     println!("    TCP listen:  {}", args.tcp.as_ref().unwrap_or(&"(no TCP interface)".to_string()));
     println!("    Serial port: {}", args.serial.as_ref().unwrap_or(&"(no serial interface)".to_string()));
 
-    let tcp_thread = if let Some(listen) = args.tcp {
-        let listener = TcpListener::bind(listen);
-        match listener{
-            Err(e) => {println!("Failed to bind: {:?}", e); std::process::exit(1);}
-            Ok(listener) => {
-                Some(thread::spawn(move||{
-                    println!("Listening on TCP");
-                    for stream in listener.incoming(){
-                        match stream {
-                            Err(e) => println!("Incoming connection failed: {:?}", e)
-                            ,Ok(mut stream) => {
-                                println!("Connection from: {}", match stream.peer_addr() {Ok(addr)=>addr.to_string(), Err(e)=>e.to_string()});
-                                handle_stream(&mut stream);
+    let (tcp_thread, serial_thread) = {
+        let (sender, receiver) = channel::<Event>();
+
+        let mut net_sender = sender.clone();
+        let mut ser_sender = sender.clone();
+
+        let tcp_thread = if let Some(listen) = args.tcp {
+            let listener = TcpListener::bind(listen);
+            match listener{
+                Err(e) => {println!("Failed to bind: {:?}", e); std::process::exit(1);}
+                Ok(listener) => {
+                    Some(thread::spawn(move||{
+                        println!("Listening on TCP");
+                        for stream in listener.incoming(){
+                            match stream {
+                                Err(e) => println!("Incoming connection failed: {:?}", e)
+                                ,Ok(mut read_stream) => {
+                                    println!("Connection from: {}", match read_stream.peer_addr() {Ok(addr)=>addr.to_string(), Err(e)=>e.to_string()});
+                                    match read_stream.try_clone() {
+                                        Ok(mut write_stream) => {handle_stream(&mut read_stream, &mut write_stream, &mut net_sender);}
+                                        ,Err(e) => {println!("Stream failed: {:?}", e);}
+                                    }
+                                }
                             }
                         }
-                    }
-                }))
+                    }))
+                }
             }
         }
-    }
-    else {
-        None
-    };
+        else {
+            None
+        };
 
-    let serial_thread = if let Some(port) = args.serial {
-        // TODO serial thread like the tcp thread
-        Some(thread::spawn(||{}))
-    }
-    else{
-        None
+        let serial_thread = if let Some(port) = args.serial {
+            // TODO serial thread like the tcp thread
+            Some(thread::spawn(||{}))
+        }
+        else{
+            None
+        };
+
+        let mut cube = Cube::new();
+
+        let mut leds = LEDDetectState::new();
+
+        for event in receiver.iter(){
+            match event {
+                Event::Client(c_ev) => {
+                    match c_ev {
+                        ClientEvent::SetState(state) =>{
+                            println!("Set cube state: {}", state);
+                            cube.deserialise(&state);
+                            println!("New state: {}", cube.simple_string());
+                        }
+                        ,ClientEvent::StartDetectLED() => {
+                            println!("Detect LEDs");
+                        }
+                    }
+                }
+                Event::Device() => {println!("device event");}
+            }
+        }
+
+        (tcp_thread, serial_thread)
     };
 
     if let Some(t) = tcp_thread { t.join(); };

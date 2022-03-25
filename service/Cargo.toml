@@ -8,10 +8,6 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.1.5", features = ["derive"] }
 pest = "2.0"
-#pest_derive = "2.0"
-#hex = "0.4.3"
-#hmac = "0.12.1"
-#sha2 = "0.10.2"
-#rand_core = { version = "0.6.3", features = ["getrandom"] }
-#rand_chacha = "0.3.1"
 plain_authentic_commands = { path="../plain_authentic_commands", features = ["challenge"] }
+cube_model = { path="../cube_model" }
+serialport = "4.0.1"
