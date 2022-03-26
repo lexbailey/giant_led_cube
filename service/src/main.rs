@@ -7,6 +7,7 @@ use plain_authentic_commands::{MessageHandler, ParseStatus};
 extern crate pest;
 use pest::Parser;
 
+
 use cube_model::Cube;
 
 #[derive(CLIParser, Debug)]
@@ -107,11 +108,20 @@ fn main() {
     println!("    TCP listen:  {}", args.tcp.as_ref().unwrap_or(&"(no TCP interface)".to_string()));
     println!("    Serial port: {}", args.serial.as_ref().unwrap_or(&"(no serial interface)".to_string()));
 
-    let (tcp_thread, serial_thread) = {
+
+    let (tcp_thread, serial_thread, device_thread) = {
         let (sender, receiver) = channel::<Event>();
 
         let mut net_sender = sender.clone();
         let mut ser_sender = sender.clone();
+        let mut dev_sender = sender.clone();
+
+        let mut device = serialport::new(args.device, 9600).open().expect("Failed to open cube device serial port.");
+
+        let device_thread = thread::spawn(move||{
+            println!("{:?}", device.write(b"cuRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRpc"));
+            println!("{:?}", device.flush());
+        });
 
         let tcp_thread = if let Some(listen) = args.tcp {
             let listener = TcpListener::bind(listen);
@@ -170,9 +180,10 @@ fn main() {
             }
         }
 
-        (tcp_thread, serial_thread)
+        (tcp_thread, serial_thread, device_thread)
     };
 
+    device_thread.join();
     if let Some(t) = tcp_thread { t.join(); };
     if let Some(t) = serial_thread { t.join(); };
 }
