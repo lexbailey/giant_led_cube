@@ -210,8 +210,12 @@ mod tests {
         assert!(auth.command_is_authentic(checked_msg, salt, mac));
         let mut auth = auth;
         auth.step();
-        let msg = auth.construct_message("test2", &vec!["arg1", "arg2"]);
-        let (checked_msg, salt, mac) = auth_code_parts(&msg, "test2:arg1,arg2,");
+        let msg = auth.construct_message("test2", &vec!["arg1", "arg2 "]);
+        let (checked_msg, salt, mac) = auth_code_parts(&msg, "test2:arg1,arg2 ,");
+        assert!(auth.command_is_authentic(checked_msg, salt, mac));
+        auth.step();
+        let msg = auth.construct_message("foo ", &vec!["arg1    "]);
+        let (checked_msg, salt, mac) = auth_code_parts(&msg, "foo :arg1    ,");
         assert!(auth.command_is_authentic(checked_msg, salt, mac));
     }
 
