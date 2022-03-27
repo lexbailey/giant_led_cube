@@ -4,6 +4,7 @@ use std::thread;
 use std::sync::mpsc::{channel,Sender,Receiver};
 use std::io::{Write,Read,BufReader,BufRead};
 use std::time::Duration;
+use std::str::FromStr;
 use plain_authentic_commands::{MessageHandler, ParseStatus};
 extern crate pest;
 use pest::Parser;
@@ -24,12 +25,18 @@ struct Args{
 enum ClientEvent{
     SetState(String)
     ,StartDetectLED()
+    ,StartDetectSwitches()
     ,UpdateLEDMap(String)
+    ,Play()
+}
+
+enum DeviceEvent{
+    Switch(i32)
 }
 
 enum Event{
     Client(ClientEvent)
-    ,Device()
+    ,Device(DeviceEvent)
 }
 
 struct LEDDetectState{
@@ -77,6 +84,7 @@ fn handle_stream<R: Read, W: Write>(read_stream: &mut R, write_stream: &mut W, s
                                 let subcommand = &args[0];
                                 match subcommand.as_ref() {
                                     "leds" => { sender.send(Event::Client(ClientEvent::StartDetectLED())); }
+                                    "switches" => { sender.send(Event::Client(ClientEvent::StartDetectSwitches())); }
                                     ,_ => {
                                         let msg = auth.construct_reply("unknown_subcommand", &vec![&command]);
                                         write_stream.write(msg.as_bytes());
@@ -139,20 +147,54 @@ fn main() {
 
         let device_name = args.device;
 
-        let mut device = serialport::new(&device_name, 9600).open().expect("Failed to open cube device serial port.");
+        let mut device = serialport::new(&device_name, 115200).open().expect("Failed to open cube device serial port.");
 
         let mut device_write = device.try_clone().expect("Failed to split serial connection into reader and writer, unsupported platform??");
 
         let device_thread = thread::spawn(move||{
             device.set_timeout(Duration::from_secs(10));
+            let mut switch_num: [u8;2] = [0,0];
+            let mut num_pos = 0;
+            #[derive(Debug)]
+            enum Mode {Normal, ParseNum};
+            use Mode::*;
+            let mut mode = Normal;
             loop{
-                let mut s = String::new();
-                if let Ok(r) = device.read_to_string(&mut s){
-                    println!("{}: {}", r, s);
+                let mut s = [0u8;50];
+                let r = device.read(&mut s);
+                match r {
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                    ,Err(_) => {break;}
+                    ,Ok(n) => {
+                        for i in 0..n{
+                            let c = s[i];
+                            match (&mode, c){
+                                (Normal, b'i') => {
+                                    // start of config mode switch report
+                                    num_pos = 0;
+                                    switch_num = [b' ',b' '];
+                                    mode = ParseNum;
+                                }
+                                ,(ParseNum, b';') => {
+                                    // end of config mode switch report
+                                    mode = Normal;
+                                    if let Ok(n) = i32::from_str(String::from_utf8_lossy(&switch_num).trim()){
+                                        println!("Switch!!!!!: {}", n);
+                                        dev_sender.send(Event::Device(DeviceEvent::Switch(n)));
+                                    }
+                                }
+                                ,(ParseNum, d) => {
+                                    switch_num[num_pos] = d;
+                                    num_pos += 1;
+                                }
+                                ,(Normal, c) => {} //unknown char
+                            }
+                        }
+                    }
                 }
             }
         });
-        println!("{:?}", device_write.write(b"cuWRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRpc\r\n"));
+        println!("{:?}", device_write.write(b"cuWWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYYp\r\n"));
         println!("{:?}", device_write.flush());
 
         let tcp_thread = if let Some(listen) = args.tcp {
@@ -212,6 +254,11 @@ fn main() {
                                 }
                             }
                         }
+                        ,ClientEvent::StartDetectSwitches() => {
+                            println!("Detect Switches");
+                            device_write.write(b"c");
+                            device_write.flush();
+                        }
                         ,ClientEvent::StartDetectLED() => {
                             println!("Detect LEDs");
                             // Configuration mode
@@ -228,9 +275,17 @@ fn main() {
                             device_write.write(new_map.as_bytes());
                             device_write.flush();
                         }
+                        ,ClientEvent::Play() =>{
+                            device_write.write(b"p");
+                            device_write.flush();
+                        }
                     }
                 }
-                Event::Device() => {println!("device event");}
+                Event::Device(d_ev) => {
+                    match d_ev {
+                        DeviceEvent::Switch(n) => {}
+                    }
+                }
             }
         }
 

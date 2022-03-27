@@ -38,13 +38,102 @@ void update_leds(PicoLed::PicoLedController ledStrip){
     sleep_ms(2);
 }
 
+#define NUM_SWITCH_INPUTS (20)
+const int switch_inputs[NUM_SWITCH_INPUTS] = {
+    2,3,4,5
+    ,6,22,8,9
+    ,10,11,12,13
+    ,14,15,16,17
+    ,18,19,20,21
+};
+
+const char* blank = "f ";
+
+const char* switch_map[24] = {
+"  "
+,"  "
+,"m "
+,"m'"
+,"f'"
+,"f "
+,"b "
+,"  "
+,"l "
+,"l'"
+,"d "
+,"d'"
+,"e "
+,"e'"
+,"u'"
+,"u "
+,"  "
+,"  "
+,"s'"
+,"s "
+,"r'"
+,"r "
+,"b'"
+,"  "
+};
+
+absolute_time_t switch_timeout[24];
+
+const char* twists[18] = {
+    "f "
+    ,"f'"
+    ,"b "
+    ,"b'"
+    ,"r "
+    ,"r'"
+    ,"l "
+    ,"l'"
+    ,"u "
+    ,"u'"
+    ,"d "
+    ,"d'"
+    ,"e "
+    ,"e'"
+    ,"m "
+    ,"m'"
+    ,"s "
+    ,"s'"
+};
+
+int mode = MODE_PLAY;
+
+void switch_isr(uint gpio, uint32_t events){
+    absolute_time_t timeout = switch_timeout[gpio];
+    absolute_time_t now = get_absolute_time();
+    //printf("%d,0x%02x\n",gpio,events);
+    if (absolute_time_diff_us(now, timeout) < 0){
+        switch_timeout[gpio] = make_timeout_time_ms(200);
+        if (events & 0x4){
+            const char* twist = switch_map[gpio];
+            if (mode == MODE_CONFIG) {
+                printf("i%d;\n", gpio);
+            }
+            twist_cube(thecube, (uint8_t*)twist, 2);
+        }
+    }
+    gpio_acknowledge_irq(gpio, events);
+}
 
 int main(){
     stdio_init_all();
-    printf("started\n");
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
+
+    absolute_time_t t = get_absolute_time();
+    for (int i = 0; i <= NUM_SWITCH_INPUTS-1; i++){
+        int pin = switch_inputs[i];
+        //switch_map[pin] = blank;
+        switch_timeout[pin] = t;
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_pull_up(pin);
+        gpio_set_irq_enabled_with_callback(pin, 12, true, switch_isr);
+    }
 
     init_cube(thecube, mapping);
 
@@ -52,7 +141,6 @@ int main(){
     ledStrip.setBrightness(64);
     ledStrip.setPixelColor(0, PicoLed::RGB(0,0,0));
 
-    int mode = MODE_PLAY;
     int next_mode = MODE_PLAY;
     int update_pos = 0;
 
@@ -82,7 +170,6 @@ int main(){
                     if (update_pos >= NUM_SUBFACES) {
                         mode = next_mode;
                         update_from_string(thecube, (uint8_t *)update_buffer);
-                        printf("udpate\r\n");
                     }
                 }
                 if (mode == MODE_MAP_READ){
@@ -97,7 +184,7 @@ int main(){
         
         if (mode == MODE_PLAY){
             //twist(thecube, (uint8_t *)"F", 1);
-            sleep_ms(100);
+            //sleep_ms(100);
         }
         if (mode == MODE_CONFIG){
             // do nothing
