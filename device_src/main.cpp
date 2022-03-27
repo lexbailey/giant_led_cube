@@ -25,15 +25,17 @@ uint32_t led_data[45];
 #define NUM_SUBFACES (6*9)
 
 char inbuf[10];
-char update_buffer[(NUM_SUBFACES*2)+1]; // big enough for two chars per subface
+volatile char update_buffer[(NUM_SUBFACES*2)+1]; // big enough for two chars per subface
 
 void update_leds(PicoLed::PicoLedController ledStrip){
+    //printf("a\r\n");
     get_data(thecube, mapping, led_data);
     for (int i = 1; i <= 45; i++){
         int led = i - 1;
         ledStrip.setPixelColor(i, PicoLed::RGB((led_data[led]>>16) & 0xff, (led_data[led] >> 8) & 0xff, led_data[led] & 0xff));
     }
     ledStrip.show();
+    sleep_ms(2);
 }
 
 
@@ -80,11 +82,12 @@ int main(){
                     if (update_pos >= NUM_SUBFACES) {
                         mode = next_mode;
                         update_from_string(thecube, (uint8_t *)update_buffer);
+                        printf("udpate\r\n");
                     }
                 }
                 if (mode == MODE_MAP_READ){
                     update_buffer[update_pos++] = c-48;
-                    if (update_pos >= NUM_SUBFACES*2) {
+                    if (update_pos >= 90) {
                         mode = next_mode;
                         remap_outputs(mapping, (uint8_t *)update_buffer);
                     }
@@ -93,7 +96,7 @@ int main(){
         }
         
         if (mode == MODE_PLAY){
-            twist(thecube, (uint8_t *)"F", 1);
+            //twist(thecube, (uint8_t *)"F", 1);
             sleep_ms(100);
         }
         if (mode == MODE_CONFIG){

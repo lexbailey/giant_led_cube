@@ -3,6 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::sync::mpsc::{channel,Sender,Receiver};
 use std::io::{Write,Read,BufReader,BufRead};
+use std::time::Duration;
 use plain_authentic_commands::{MessageHandler, ParseStatus};
 extern crate pest;
 use pest::Parser;
@@ -23,6 +24,7 @@ struct Args{
 enum ClientEvent{
     SetState(String)
     ,StartDetectLED()
+    ,UpdateLEDMap(String)
 }
 
 enum Event{
@@ -68,7 +70,26 @@ fn handle_stream<R: Read, W: Write>(read_stream: &mut R, write_stream: &mut W, s
                                 }
                             }
                             ,"detect" => {
-                                println!("TODO: logic for detecting LED or switch sequence");
+                                if args.len() < 1{
+                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                    write_stream.write(msg.as_bytes());
+                                }
+                                let subcommand = &args[0];
+                                match subcommand.as_ref() {
+                                    "leds" => { sender.send(Event::Client(ClientEvent::StartDetectLED())); }
+                                    ,_ => {
+                                        let msg = auth.construct_reply("unknown_subcommand", &vec![&command]);
+                                        write_stream.write(msg.as_bytes());
+                                    }
+                                }
+                            }
+                            ,"led_mapping" => {
+                                if args.len() != 1{
+                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                    write_stream.write(msg.as_bytes());
+                                }
+                                let new_mapping = &args[0];
+                                sender.send(Event::Client(ClientEvent::UpdateLEDMap(new_mapping.clone())));
                             }
                             ,_=>{
                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
@@ -116,12 +137,23 @@ fn main() {
         let mut ser_sender = sender.clone();
         let mut dev_sender = sender.clone();
 
-        let mut device = serialport::new(args.device, 9600).open().expect("Failed to open cube device serial port.");
+        let device_name = args.device;
+
+        let mut device = serialport::new(&device_name, 9600).open().expect("Failed to open cube device serial port.");
+
+        let mut device_write = device.try_clone().expect("Failed to split serial connection into reader and writer, unsupported platform??");
 
         let device_thread = thread::spawn(move||{
-            println!("{:?}", device.write(b"cuRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRpc"));
-            println!("{:?}", device.flush());
+            device.set_timeout(Duration::from_secs(10));
+            loop{
+                let mut s = String::new();
+                if let Ok(r) = device.read_to_string(&mut s){
+                    println!("{}: {}", r, s);
+                }
+            }
         });
+        println!("{:?}", device_write.write(b"cuWRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRGGGGGGGGGRRRRRRRRRpc\r\n"));
+        println!("{:?}", device_write.flush());
 
         let tcp_thread = if let Some(listen) = args.tcp {
             let listener = TcpListener::bind(listen);
@@ -168,11 +200,33 @@ fn main() {
                     match c_ev {
                         ClientEvent::SetState(state) =>{
                             println!("Set cube state: {}", state);
-                            cube.deserialise(&state);
-                            println!("New state: {}", cube.simple_string());
+                            match cube.deserialise(&state) {
+                                Ok(_) => {
+                                    println!("New state: {}", cube.simple_string());
+                                    device_write.write(b"u");
+                                    device_write.write(state.as_bytes());
+                                    device_write.flush();
+                                }
+                                ,Err(msg) => {
+                                    println!("Unable to deserialise cube state: {}", msg);
+                                }
+                            }
                         }
                         ,ClientEvent::StartDetectLED() => {
                             println!("Detect LEDs");
+                            // Configuration mode
+                            device_write.write(b"c");
+                            // Blank mapping
+                            device_write.write(b"m000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758");
+                            // All subfaces blank
+                            device_write.write(b"u                                                      ");
+                            device_write.flush();
+                        }
+                        ,ClientEvent::UpdateLEDMap(new_map) => {
+                            println!("led map update");
+                            device_write.write(b"cm");
+                            device_write.write(new_map.as_bytes());
+                            device_write.flush();
                         }
                     }
                 }

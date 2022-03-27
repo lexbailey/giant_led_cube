@@ -237,7 +237,10 @@ impl Cube{
         self.faces[f.face].subfaces[f.subface].color
     }
 
-    pub fn deserialise(&mut self, data: &str) {
+    pub fn deserialise(&mut self, data: &str) -> Result<(), &'static str> {
+        if data.len() < 54{
+            return Err("not enough data, incomplete cube state");
+        }
         let mut i: usize = 0;
         for face in &mut self.faces[0..6]{
             for sface in &mut face.subfaces{
@@ -247,6 +250,7 @@ impl Cube{
                 i+=1;
             }
         }
+        Ok(())
     }
 
     #[cfg(not(feature="without_std"))]
@@ -313,6 +317,15 @@ impl Cube{
 pub type SwitchMap5Faces = [Twist;48];
 
 pub type OutputMap5Faces = [Output;45];
+
+#[cfg(not(feature="without_std"))]
+pub fn serialise_output_map(map: &OutputMap5Faces) -> String {
+    let mut result = String::new();
+    for i in 0..45{
+        result.push_str(&format!("{}{}", map[i].face, map[i].subface));
+    }
+    result
+}
 
 #[cfg(test)]
 mod tests {

@@ -5,6 +5,7 @@ extern crate glutin;
 
 mod affine;
 use cube_model as cube;
+use cube::{Output, OutputMap5Faces};
 
 #[cfg(feature="opengl")]
 use gl::types::*;
@@ -21,6 +22,8 @@ use std::io::{self,Read,Write,BufRead,BufReader};
 use std::net::TcpStream;
 use std::sync::mpsc::{channel,Sender};
 use std::thread::{self,Thread,JoinHandle};
+use std::collections::VecDeque;
+use std::str::FromStr;
 
 #[cfg(feature="opengl")]
 mod gl_abstractions;
@@ -165,6 +168,20 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
     });
     
     let event_thread = thread::spawn(move||{
+        let mut command_queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
+        let mut got_challenge = true;
+
+        fn send_events(got_challenge: &mut bool, command_queue: &mut VecDeque<(String, Vec<String>)>, msg: &mut TcpMessenger){
+            if *got_challenge {
+                if let Some((command, args)) = command_queue.pop_front() {
+                    *got_challenge = false;
+                    //println!("Send command: {}, {:?}", command, args);
+                    let args = args.iter().map(|a|a.as_ref()).collect();
+                    msg.send_command(&command, &args);
+                }
+            }
+        }
+
         for event in receiver.iter(){
             match event {
                 Event::Response(s) => {
@@ -172,7 +189,8 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                         ParseStatus::Success(response, args) => {
                             match response.as_ref() {
                                 "challenge" => {
-                                    // do nothing
+                                    got_challenge = true;
+                                    send_events(&mut got_challenge, &mut command_queue, &mut msg);
                                 }   
                                 ,r=>{
                                     eprintln!("response: {}", r);
@@ -190,9 +208,8 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                     };
                 }
                 ,Event::Command(command, args) => {
-                    println!("Send command: {}, {:?}", command, args);
-                    let args = args.iter().map(|a|a.as_ref()).collect();
-                    msg.send_command(&command, &args);
+                    command_queue.push_back((command, args));
+                    send_events(&mut got_challenge, &mut command_queue, &mut msg);
                 }
             }
         }
@@ -482,7 +499,7 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
         //let clear = tput(|f|f.arg("clear"));
 
         //println!("{}              Back", clear);
-        println!("              Back");
+        println!("              Back ({})", cube::BACK);
         println!("              ┏━━━━━━━━━━━━━┓");
         println!("              ┃ {} {} {} ┃", nb(ba, 8), nb(ba, 7), nb(ba, 6));
         println!("              ┃ {} {} {} ┃", bb(ba, 8), bb(ba, 7), bb(ba, 6));
@@ -491,11 +508,11 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
         println!("              ┃ {} {} {} ┃", bb(ba, 5), bb(ba, 4), bb(ba, 3));
         println!("              ┃             ┃");
         println!("              ┃ {} {} {} ┃", nb(ba, 2), nb(ba, 1), nb(ba, 0));
-        println!("Left          ┃ {} {} {} ┃    Right             Bottom", bb(ba, 2), bb(ba, 1), bb(ba, 0));
+        println!("Left ({})      ┃ {} {} {} ┃    Right ({})      Bottom ({})", cube::LEFT, bb(ba, 2), bb(ba, 1), bb(ba, 0), cube::RIGHT, cube::BOTTOM);
         println!("┏━━━━━━━━━━━━━╋━━━━━━━━━━━━━╋━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓");
         println!("┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃", nb(l,6), nb(l,3), nb(l,0),   nb(t,0), nb(t,1), nb(t,2),   nb(r,2), nb(r,5), nb(r,8),   nb(bo,0), nb(bo,1), nb(bo,2));
         println!("┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃", bb(l,6), bb(l,3), bb(l,0),   bb(t,0), bb(t,1), bb(t,2),   bb(r,2), bb(r,5), bb(r,8),   bb(bo,0), bb(bo,1), bb(bo,2));
-        println!("┃             ┃             ┃             ┃             ┃");
+        println!("┃             ┃    Top ({})  ┃             ┃             ┃", cube::TOP);
         println!("┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃", nb(l,7), nb(l,4), nb(l,1),   nb(t,3), nb(t,4), nb(t,5),   nb(r,1), nb(r,4), nb(r,7),   nb(bo,3), nb(bo,4), nb(bo,5));
         println!("┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃ {} {} {} ┃", bb(l,7), bb(l,4), bb(l,1),   bb(t,3), bb(t,4), bb(t,5),   bb(r,1), bb(r,4), bb(r,7),   bb(bo,3), bb(bo,4), bb(bo,5));
         println!("┃             ┃             ┃             ┃             ┃");
@@ -511,7 +528,7 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
         println!("              ┃ {} {} {} ┃", nb(f, 6), nb(f, 7), nb(f, 8));
         println!("              ┃ {} {} {} ┃", bb(f, 6), bb(f, 7), bb(f, 8));
         println!("              ┗━━━━━━━━━━━━━┛");
-        println!("              Front");
+        println!("              Front ({})", cube::FRONT);
     }
 
     fn prompt(data: &mut DataModel, user_input: &mut std::io::Lines<StdinLock<'_>>) -> String{
@@ -544,6 +561,24 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
     }
 
     draw(&gfx, &data);
+
+    let mut led_map: OutputMap5Faces = [Output{face:0,subface:0}; 45];
+
+    let mut detecting_led: u32 = 0;
+
+    fn detect_ui(led: u32, sender: &Option<Sender<Event>>){
+        if sender.is_none(){
+            println!("not connected, connect and then run 'detect again'");
+            return;
+        }
+        let mut test_state = String::new();
+        for i in 0..54{
+            test_state.push(if i == led {'W'} else {' '});
+        }
+        send_command(sender, "set_state", vec![&test_state]);
+        println!("LED {} is lit. Use 'map <F> <S>' to map this LED to face F and subface S", led);
+    }
+    
     loop {
         let command = prompt(&mut data, &mut user_input);
         match command.as_ref(){
@@ -578,29 +613,52 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
             }
             ,"detect leds" => {
                 println!("Starting LED detect sequence...");
-                send_command(&sender, "detect", vec!["leds"])
-            }
-            ,"detect paddles" => {
-                println!("Starting paddle detect sequence...");
-                send_command(&sender, "detect", vec!["paddles"])
+                println!("Use 'detect next' to move to next LED");
+                send_command(&sender, "detect", vec!["leds"]);
+                detecting_led = 0;
+                detect_ui(detecting_led, &sender);
             }
             ,"detect next" => {
                 println!("Next item...");
-                send_command(&sender, "detect", vec!["next"])
+                detecting_led += 1;
+                detect_ui(detecting_led, &sender);
+            }
+            ,"detect done" => {
+                println!("Done detecting, sending new config");
+                send_command(&sender, "led_mapping", vec![&cube::serialise_output_map(&led_map)])
             }
             ,"" => {}
             ,cmd => {
                 let mut parts = cmd.split(' ');
                 let name = parts.next().unwrap();
-                let args = &cmd[name.len()..cmd.len()];
+                let args_str = &cmd[name.len()..cmd.len()];
+                let args = parts.collect::<Vec<&str>>();
                 match name.as_ref(){
                     "twist" => {
-                        match data.cube.twists(args){
+                        match data.cube.twists(args_str){
                             Err(msg) => {println!("Error: {}", msg)}
                             ,Ok(_) => {
                                 send_command(&sender, "set_state", vec![&data.cube.serialise()]);
                                 draw(&gfx, &data);
                                 println!("Done twists.");
+                            }
+                        }
+                    }
+                    ,"map" => {
+                        if args.len() != 2{
+                            println!("map requires two parameters");
+                        }
+                        else{
+                            if let Ok((f, s)) = (||{
+                                Result::<(usize, usize), std::num::ParseIntError>::Ok((
+                                    usize::from_str(args[0])?
+                                    ,usize::from_str(args[1])?
+                                ))
+                            })() {
+                                led_map[detecting_led as usize] = Output{face:f, subface:s};
+                                println!("mapped led {} to (face, subface) = ({}, {})", detecting_led, f, s);
+                                detecting_led += 1;
+                                detect_ui(detecting_led, &sender);
                             }
                         }
                     }
