@@ -24,6 +24,7 @@ use std::sync::mpsc::{channel,Sender};
 use std::thread::{self,Thread,JoinHandle};
 use std::collections::VecDeque;
 use std::str::FromStr;
+use std::collections::HashSet;
 
 #[cfg(feature="opengl")]
 mod gl_abstractions;
@@ -102,6 +103,7 @@ type TcpMessenger = Messenger<TcpStream, TcpConnector>;
 enum Event {
     Response(Vec<u8>)
     ,Command(String, Vec<String>)
+    ,DetectInputs()
 }
 
 fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
@@ -150,6 +152,108 @@ impl<T: Read + Write, C: Connector<Stream=T>> Messenger<T, C>{
     }
 }
 
+struct DetectState {
+    twist: usize
+    ,cur_sample: usize
+    ,samples: [Option<u32>;5]
+    ,map: [u32;18]
+    ,complete: bool
+}
+
+impl DetectState{
+
+    fn new() -> Self{
+        DetectState{
+            twist: 0
+            ,cur_sample: 0
+            ,samples: [None;5]
+            ,map: [0;18]
+            ,complete: false
+        }
+    }
+
+    fn detected_input_num(&mut self) -> Option<u32>{
+        for s in self.samples{
+            let mut n = 0;
+            for  s2 in self.samples{
+                if s2 == s {
+                    n += 1;
+                }
+            }
+            if n >= 3 {
+                return s;
+            }
+        }
+        None
+    }
+
+    fn reset_samples(&mut self) {
+        for i in 0..5{
+            self.samples[i] = None;
+        }
+    }
+
+    fn ui(&mut self) -> String{
+        let mut test_state = [b' ';54];
+        let (red, green) = match self.twist {
+            0 => (8,4*9)
+            ,1 => (4*9,8)
+            ,2 => ((4*9)+2,2)
+            ,3 => (2,(4*9)+2)
+            ,4 => (9+2,8)
+            ,5 => (8,9+2)
+            ,6 => (6,9)
+            ,7 => (9,6)
+            ,8 => (4*9,9+2)
+            ,9 => (9+2,4*9)
+            ,10 => (9+8,(4*9)+6)
+            ,11 => ((4*9)+6,9+8)
+
+            ,12 => (9+5,(4*9)+3)
+            ,13 => ((4*9)+1,9+5)
+
+            ,14 => (7,9+1)
+            ,15 => (9+1,7)
+
+            ,16 => (5,(4*9)+1)
+            ,17 => ((4*9)+1,5)
+            ,_ => (0,0)
+        };
+        test_state[red] = b'R';
+        test_state[green] = b'G';
+        println!("Push the switch between the red and green LEDs towards the green LED. Repeat several times to continue.");
+        String::from_utf8_lossy(&test_state).to_string()
+    }
+
+    fn sample_input(&mut self, sample: u32) -> Option<String>{
+        self.samples[self.cur_sample] = Some(sample);
+        self.cur_sample = (self.cur_sample + 1) % 5;
+        if let Some(input) = self.detected_input_num(){
+            println!("Mapping input {} to twist number {}", input, self.twist);
+            self.map[self.twist] = input;
+            self.reset_samples();
+            self.twist += 1;
+            if self.twist > 17 {
+                self.complete = true;
+                let duplicates = self.map.iter().collect::<HashSet<_>>().len() != self.map.len();
+                if duplicates {
+                    println!("Some inputs were duplicated, this config is invalid, try again.");
+                }
+                else{
+                    println!("TODO send new mapping");
+                }
+                Some("                                                      ".to_string())
+            }
+            else{
+                Some(self.ui())
+            }
+        }
+        else{
+            None
+        }
+    }
+}
+
 fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender<Event>)>{
 
     let (sender, receiver) = channel();
@@ -182,6 +286,8 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
             }
         }
 
+        let mut detect_state = DetectState::new();
+
         for event in receiver.iter(){
             match event {
                 Event::Response(s) => {
@@ -190,10 +296,20 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                             match response.as_ref() {
                                 "challenge" => {
                                     got_challenge = true;
-                                    send_events(&mut got_challenge, &mut command_queue, &mut msg);
                                 }   
+                                ,"input" => {
+                                    println!("user applied input: {}", args[0]);
+                                    if let Ok(input) = u32::from_str(&args[0]){
+                                        if let Some(test_state) = detect_state.sample_input(input){
+                                            command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                                        }
+                                    }
+                                    else {
+                                        println!("Not a valid number: {}", args[0]);
+                                    }
+                                }
                                 ,r=>{
-                                    eprintln!("response: {}", r);
+                                    eprintln!("TODO handle response: {}", r);
                                 }   
                             };  
                         }   
@@ -209,9 +325,15 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                 }
                 ,Event::Command(command, args) => {
                     command_queue.push_back((command, args));
-                    send_events(&mut got_challenge, &mut command_queue, &mut msg);
+                }
+                ,Event::DetectInputs() => {
+                    command_queue.push_back(("detect".to_string(), vec!["inputs".to_string()]));
+                    detect_state = DetectState::new();
+                    let test_state = detect_state.ui();
+                    command_queue.push_back(("set_state".to_string(), vec![test_state]));
                 }
             }
+            send_events(&mut got_challenge, &mut command_queue, &mut msg);
         }
     });
     Ok((net_thread, event_thread, CLI_sender))
@@ -548,16 +670,22 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
     let mut net_thread: Option<JoinHandle<()>> = None;
     let mut event_thread: Option<JoinHandle<()>> = None;
 
-    fn send_command(sender: &Option<Sender<Event>>, command: &str, args: Vec<&str>){
+
+    fn send_event(sender: &Option<Sender<Event>>, ev: Event) {
         if sender.is_none(){
             println!("Not connected, please run `connect` command first.");
             return;
         }
         let sender = sender.as_ref().unwrap();
-        match sender.send(Event::Command(command.to_string(), args.iter().map(|s|s.to_string()).collect())){
+        let result = sender.send(ev);
+        match result {
             Ok(_) => {}
             ,Err(e) => {println!("Failed to send command: {:?}", e);}
         }
+    }
+
+    fn send_command(sender: &Option<Sender<Event>>, command: &str, args: Vec<&str>){
+        send_event(sender, Event::Command(command.to_string(), args.iter().map(|s|s.to_string()).collect()));
     }
 
     draw(&gfx, &data);
@@ -565,8 +693,8 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
     let mut led_map: OutputMap5Faces = [Output{face:0,subface:0}; 45];
 
     let mut detecting_led: u32 = 0;
-
-    fn detect_ui(led: u32, sender: &Option<Sender<Event>>){
+    
+    fn detect_led_ui(led: u32, sender: &Option<Sender<Event>>){
         if sender.is_none(){
             println!("not connected, connect and then run 'detect again'");
             return;
@@ -616,12 +744,17 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
                 println!("Use 'detect next' to move to next LED");
                 send_command(&sender, "detect", vec!["leds"]);
                 detecting_led = 0;
-                detect_ui(detecting_led, &sender);
+                detect_led_ui(detecting_led, &sender);
+            }
+            ,"detect inputs" => {
+                println!("Starting input detect sequence...");
+                println!("Use 'detect next' to move to next input");
+                send_event(&sender, Event::DetectInputs());
             }
             ,"detect next" => {
                 println!("Next item...");
                 detecting_led += 1;
-                detect_ui(detecting_led, &sender);
+                detect_led_ui(detecting_led, &sender);
             }
             ,"detect done" => {
                 println!("Done detecting, sending new config");
@@ -658,7 +791,7 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
                                 led_map[detecting_led as usize] = Output{face:f, subface:s};
                                 println!("mapped led {} to (face, subface) = ({}, {})", detecting_led, f, s);
                                 detecting_led += 1;
-                                detect_ui(detecting_led, &sender);
+                                detect_led_ui(detecting_led, &sender);
                             }
                         }
                     }

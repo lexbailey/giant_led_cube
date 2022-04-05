@@ -22,8 +22,23 @@ struct Args{
     serial: Option<String>,
 }
 
+enum GUIEvent{
+    RawInput(i32) // The GPIO pin number
+    ,Twist(cube_model::Twist)
+    ,Complete()
+}
+
+use std::marker::Send;
+
+enum StreamEvent{
+    GUI(GUIEvent)
+    ,RecvLine(Vec<u8>)
+    ,EOS()
+}
+
 enum ClientEvent{
-    SetState(String)
+    Connected(Sender<StreamEvent>)
+    ,SetState(String)
     ,StartDetectLED()
     ,StartDetectSwitches()
     ,UpdateLEDMap(String)
@@ -38,7 +53,7 @@ enum Event{
     Client(ClientEvent)
     ,Device(DeviceEvent)
 }
-
+/*
 struct LEDDetectState{
     cur_led: usize
     ,map: [Option<(usize, usize)>; 9*5] // five faces, tuple of face index and subface index
@@ -52,74 +67,103 @@ impl LEDDetectState{
         }
     }
 }
+*/
 
-fn handle_stream<R: Read, W: Write>(read_stream: &mut R, write_stream: &mut W, sender: &mut Sender<Event>){
+fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(mut read_stream: R, mut write_stream: W, sender: Sender<Event>){
     let mut auth = MessageHandler::new(b"secret".to_vec());
     let mut buffer = BufReader::new(read_stream);
-    for line_result in buffer.split(b'\n'){
-        match line_result {
-            Ok(line) => { // Got a line to read
-                match auth.parse_command(&line) {
-                    ParseStatus::Success(command, args) => {
-                        match command.as_ref() {
-                            "next_challenge" => {
-                                // Do nothing, command exists purely to cause a challenge to be sent
-                                // The next challenge is sent after each command anyway
-                            }
-                            ,"set_state" => {
-                                if args.len() >= 1{
-                                    println!("Set absolute cube state: {}", args[0]);
-                                    sender.send(Event::Client(ClientEvent::SetState(args[0].clone())));
+    let (stream_sender, stream_receiver) = channel::<StreamEvent>();
+    let gui_sender = stream_sender.clone();
+    
+    let stream_thread = thread::spawn(move||{
+        sender.send(Event::Client(ClientEvent::Connected(gui_sender)));
+        for event in stream_receiver.iter() {
+            use StreamEvent::*;
+            match event{
+                EOS() => {
+                    break;
+                }
+                ,RecvLine(line) => {
+                    match auth.parse_command(&line) {
+                        ParseStatus::Success(command, args) => {
+                            match command.as_ref() {
+                                "next_challenge" => {
+                                    // Do nothing, command exists purely to cause a challenge to be sent
+                                    // The next challenge is sent after each command anyway
                                 }
-                                else{
-                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
-                                    write_stream.write(msg.as_bytes());
-                                }
-                            }
-                            ,"detect" => {
-                                if args.len() < 1{
-                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
-                                    write_stream.write(msg.as_bytes());
-                                }
-                                let subcommand = &args[0];
-                                match subcommand.as_ref() {
-                                    "leds" => { sender.send(Event::Client(ClientEvent::StartDetectLED())); }
-                                    "switches" => { sender.send(Event::Client(ClientEvent::StartDetectSwitches())); }
-                                    ,_ => {
-                                        let msg = auth.construct_reply("unknown_subcommand", &vec![&command]);
+                                ,"set_state" => {
+                                    if args.len() >= 1{
+                                        println!("Set absolute cube state: {}", args[0]);
+                                        sender.send(Event::Client(ClientEvent::SetState(args[0].clone())));
+                                    }
+                                    else{
+                                        let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
                                         write_stream.write(msg.as_bytes());
                                     }
                                 }
-                            }
-                            ,"led_mapping" => {
-                                if args.len() != 1{
-                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                ,"detect" => {
+                                    if args.len() < 1{
+                                        let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                        write_stream.write(msg.as_bytes());
+                                    }
+                                    let subcommand = &args[0];
+                                    match subcommand.as_ref() {
+                                        "leds" => { sender.send(Event::Client(ClientEvent::StartDetectLED())); }
+                                        "inputs" => { sender.send(Event::Client(ClientEvent::StartDetectSwitches())); }
+                                        ,_ => {
+                                            let msg = auth.construct_reply("unknown_subcommand", &vec![&command]);
+                                            write_stream.write(msg.as_bytes());
+                                        }
+                                    }
+                                }
+                                ,"led_mapping" => {
+                                    if args.len() != 1{
+                                        let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                        write_stream.write(msg.as_bytes());
+                                    }
+                                    let new_mapping = &args[0];
+                                    sender.send(Event::Client(ClientEvent::UpdateLEDMap(new_mapping.clone())));
+                                }
+                                ,_=>{
+                                    let msg = auth.construct_reply("unknown_command", &vec![&command]);
                                     write_stream.write(msg.as_bytes());
                                 }
-                                let new_mapping = &args[0];
-                                sender.send(Event::Client(ClientEvent::UpdateLEDMap(new_mapping.clone())));
-                            }
-                            ,_=>{
-                                let msg = auth.construct_reply("unknown_command", &vec![&command]);
-                                write_stream.write(msg.as_bytes());
-                            }
-                        };
-                        auth.step();
-                        let msg = auth.construct_reply("challenge", &vec![&auth.get_salt()]);
-                        write_stream.write(msg.as_bytes());
+                            };
+                            auth.step();
+                            let msg = auth.construct_reply("challenge", &vec![&auth.get_salt()]);
+                            write_stream.write(msg.as_bytes());
+                        }
+                        // Dont sign replies to messages that are not authorised. If we don't trust the source, we won't sign things for them
+                        ,ParseStatus::BadClient() => {write_stream.write(b"+malformed_command:a#a\n"); break;}
+                        ,ParseStatus::Unauthorised() => {write_stream.write(b"+auth_fail:a#a\n"); break;}
+                    };
+                }
+                ,GUI(e) => {
+                    match e {
+                        GUIEvent::RawInput(i) => {
+                            let msg = auth.construct_reply("input", &vec![&format!("{}", i)]);
+                            write_stream.write(msg.as_bytes());
+                        }
+                        ,GUIEvent::Twist(t) => { println!("TODO: send event twist");}
+                        ,GUIEvent::Complete() => { println!("TODO: send event complete");}
                     }
-                    // Dont sign replies to messages that are not authorised. If we don't trust the source, we won't sign things for them
-                    ,ParseStatus::BadClient() => {write_stream.write(b"+malformed_command:a#a\n"); break;}
-                    ,ParseStatus::Unauthorised() => {write_stream.write(b"+auth_fail:a#a\n"); break;}
-                };
+                }
             }
+        }
+    });
+
+    for line_result in buffer.split(b'\n'){
+        match line_result {
+            Ok(line) => {stream_sender.send(StreamEvent::RecvLine(line));}
             ,Err(e) => {
                 println!("Unable to read from remote: {:?}", e);
                 break;
             }
         }
     }
+    stream_sender.send(StreamEvent::EOS());
     println!("Client stream ended, disconnected.");
+    stream_thread.join();
 }
 
 fn main() {
@@ -156,7 +200,7 @@ fn main() {
             let mut switch_num: [u8;2] = [0,0];
             let mut num_pos = 0;
             #[derive(Debug)]
-            enum Mode {Normal, ParseNum};
+            enum Mode {Normal, ParseNum}
             use Mode::*;
             let mut mode = Normal;
             loop{
@@ -179,7 +223,7 @@ fn main() {
                                     // end of config mode switch report
                                     mode = Normal;
                                     if let Ok(n) = i32::from_str(String::from_utf8_lossy(&switch_num).trim()){
-                                        println!("Switch!!!!!: {}", n);
+                                        println!("Raw input: {}", n);
                                         dev_sender.send(Event::Device(DeviceEvent::Switch(n)));
                                     }
                                 }
@@ -210,7 +254,7 @@ fn main() {
                                 ,Ok(mut read_stream) => {
                                     println!("Connection from: {}", match read_stream.peer_addr() {Ok(addr)=>addr.to_string(), Err(e)=>e.to_string()});
                                     match read_stream.try_clone() {
-                                        Ok(mut write_stream) => {handle_stream(&mut read_stream, &mut write_stream, &mut net_sender);}
+                                        Ok(mut write_stream) => {handle_stream(read_stream, write_stream, net_sender.clone());}
                                         ,Err(e) => {println!("Stream failed: {:?}", e);}
                                     }
                                 }
@@ -234,7 +278,9 @@ fn main() {
 
         let mut cube = Cube::new();
 
-        let mut leds = LEDDetectState::new();
+        //let mut leds = LEDDetectState::new();
+
+        let mut gui_sender: Option<Sender<StreamEvent>> = None;
 
         for event in receiver.iter(){
             match event {
@@ -275,15 +321,22 @@ fn main() {
                             device_write.write(new_map.as_bytes());
                             device_write.flush();
                         }
-                        ,ClientEvent::Play() =>{
+                        ,ClientEvent::Play() => {
                             device_write.write(b"p");
                             device_write.flush();
+                        }
+                        ,ClientEvent::Connected(sender) => {
+                            gui_sender = Some(sender);
                         }
                     }
                 }
                 Event::Device(d_ev) => {
                     match d_ev {
-                        DeviceEvent::Switch(n) => {}
+                        DeviceEvent::Switch(n) => {
+                            if let Some(sender) = gui_sender.as_ref(){
+                                let _ignored = sender.send(StreamEvent::GUI(GUIEvent::RawInput(n)));
+                            }
+                        }
                     }
                 }
             }

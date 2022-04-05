@@ -20,7 +20,8 @@ uint32_t led_data[45];
 #define MODE_PLAY (0)
 #define MODE_CONFIG (1)
 #define MODE_UPDATE_READ (2)
-#define MODE_MAP_READ (3)
+#define MODE_LEDMAP_READ (3)
+#define MODE_SWITCHMAP_READ (4)
 
 #define NUM_SUBFACES (6*9)
 
@@ -49,7 +50,9 @@ const int switch_inputs[NUM_SWITCH_INPUTS] = {
 
 const char* blank = "f ";
 
-const char* switch_map[24] = {
+const char* switch_map[24];
+/*
+ = {
 "  "
 ,"  "
 ,"m "
@@ -74,7 +77,7 @@ const char* switch_map[24] = {
 ,"r "
 ,"b'"
 ,"  "
-};
+};*/
 
 absolute_time_t switch_timeout[24];
 
@@ -112,7 +115,10 @@ void switch_isr(uint gpio, uint32_t events){
             if (mode == MODE_CONFIG) {
                 printf("i%d;\n", gpio);
             }
-            twist_cube(thecube, (uint8_t*)twist, 2);
+            if (mode == MODE_PLAY) {
+                printf("*%s;\n", twist);
+                twist_cube(thecube, (uint8_t*)twist, 2);
+            }
         }
     }
     gpio_acknowledge_irq(gpio, events);
@@ -127,7 +133,7 @@ int main(){
     absolute_time_t t = get_absolute_time();
     for (int i = 0; i <= NUM_SWITCH_INPUTS-1; i++){
         int pin = switch_inputs[i];
-        //switch_map[pin] = blank;
+        switch_map[pin] = blank;
         switch_timeout[pin] = t;
         gpio_init(pin);
         gpio_set_dir(pin, GPIO_IN);
@@ -159,9 +165,14 @@ int main(){
                 mode = MODE_UPDATE_READ;
                 update_pos = 0;
             }
-            else if (c == 'm'){ // new Mapping
+            else if (c == 'm'){ // new led Mapping
                 next_mode = mode;
-                mode = MODE_MAP_READ;
+                mode = MODE_LEDMAP_READ;
+                update_pos = 0;
+            }
+            else if (c == 'a'){ // new switch mapping
+                next_mode = mode;
+                mode = MODE_SWITCHMAP_READ;
                 update_pos = 0;
             }
             else {
@@ -172,11 +183,22 @@ int main(){
                         update_from_string(thecube, (uint8_t *)update_buffer);
                     }
                 }
-                if (mode == MODE_MAP_READ){
+                if (mode == MODE_LEDMAP_READ){
                     update_buffer[update_pos++] = c-48;
                     if (update_pos >= 90) {
                         mode = next_mode;
                         remap_outputs(mapping, (uint8_t *)update_buffer);
+                    }
+                }
+                if (mode == MODE_SWITCHMAP_READ){
+                    update_buffer[update_pos++] = c;
+                    if (update_pos >= (18*2)) {
+                        mode = next_mode;
+                        for (int i = 0; i<= 18-1; i++){
+                            int p = i*2;
+                            int switch_num = ((update_buffer[p]-48)*10) + update_buffer[p+1];
+                            switch_map[switch_num] = twists[i];
+                        }
                     }
                 }
             }
