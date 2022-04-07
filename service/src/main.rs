@@ -300,7 +300,7 @@ fn main() {
                                         dev_sender.send(Event::Device(DeviceEvent::Solved()));
                                 }
                                 ,(Normal, b'*') => {
-                                    num_pos = 0;
+                                    twist_pos = 0;
                                     twist_id = [b' ',b' '];
                                     mode = ParseTwist;
                                 }
