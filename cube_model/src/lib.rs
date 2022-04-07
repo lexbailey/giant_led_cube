@@ -103,6 +103,7 @@ impl Face{
     }
 }
 
+// TODO make this an enum? how to handle FAKE_FACE_MIN for enum?
 pub const TOP: usize = 0;
 pub const FRONT: usize = 1;
 pub const LEFT: usize = 2;
@@ -117,15 +118,15 @@ pub const CENTER_BT: usize = 8;
 // Represents any turn that is a single turn according to Quarter Slice Turn Metric
 // (This means that it can only represent 90-degree turns, and not 180-degree turns
 // and that it also does not represent full-cube rotations)
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Twist{
     pub face: usize
     ,pub reverse: bool
 }
 
 impl Twist{
-    pub fn from_string(s: &str) -> Result<Twist, &'static str>{
-        let s = s.as_bytes();
+
+    pub fn from_bytes(s: &[u8]) -> Result<Twist, &'static str>{
         let l = s.len();
         if l < 1 || l > 3 {
             Err("Invalid twist string")
@@ -143,6 +144,7 @@ impl Twist{
                         match s[1] {
                             b'A' => {Ok(BACK)},
                             b'a' => {Ok(BACK)},
+                            b' ' => {Ok(BACK)},
                             b'O' => {Ok(BOTTOM)},
                             b'o' => {Ok(BOTTOM)},
                             _ => {Err("Invalid twist string")}
@@ -162,6 +164,11 @@ impl Twist{
                 ,reverse: reverse
             })
         }
+    }
+
+    pub fn from_string(s: &str) -> Result<Twist, &'static str>{
+        let s = s.as_bytes();
+        Twist::from_bytes(s)
     }
 
     #[cfg(not(feature="without_std"))]
@@ -186,6 +193,32 @@ impl Twist{
             }
         }
         Ok(seq)
+    }
+
+}
+
+#[cfg(not(feature="without_std"))]
+use std::fmt;
+#[cfg(not(feature="without_std"))]
+impl fmt::Display for Twist{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f
+            ,"{}{}"
+            ,match self.face {
+                TOP => "U"
+                ,FRONT => "F"
+                ,LEFT => "L"
+                ,BACK => "B"
+                ,RIGHT => "R"
+                ,BOTTOM => "D"
+                ,CENTER_FB => "S"
+                ,CENTER_LR => "M"
+                ,CENTER_BT => "E"
+                ,_=>"?"
+            }
+            ,if self.reverse {"'"} else {""}
+        )
     }
 }
 
@@ -311,6 +344,19 @@ impl Cube{
             ,self.faces[RIGHT].simple_string()
             ,self.faces[BOTTOM].simple_string()
         )
+    }
+
+    pub fn is_solved(&self) -> bool {
+        for f in 0..6{
+            let face = self.faces[f];
+            let col = face.subfaces[0].color;
+            for s in 1..9{
+                if face.subfaces[s].color != col{
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 

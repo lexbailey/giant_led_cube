@@ -5,7 +5,7 @@ extern crate glutin;
 
 mod affine;
 use cube_model as cube;
-use cube::{Output, OutputMap5Faces};
+use cube::{Output, OutputMap5Faces, Twist};
 
 #[cfg(feature="opengl")]
 use gl::types::*;
@@ -158,6 +158,13 @@ struct DetectState {
     ,samples: [Option<u32>;5]
     ,map: [u32;18]
     ,complete: bool
+    ,active: bool
+}
+
+enum DetectMessage {
+    Nothing()
+    ,TestState(String)
+    ,Mapping(String)
 }
 
 impl DetectState{
@@ -169,7 +176,12 @@ impl DetectState{
             ,samples: [None;5]
             ,map: [0;18]
             ,complete: false
+            ,active: false
         }
+    }
+
+    fn activate(&mut self) {
+        self.active = true;
     }
 
     fn detected_input_num(&mut self) -> Option<u32>{
@@ -210,7 +222,7 @@ impl DetectState{
             ,11 => ((4*9)+6,9+8)
 
             ,12 => (9+5,(4*9)+3)
-            ,13 => ((4*9)+1,9+5)
+            ,13 => ((4*9)+3,9+5)
 
             ,14 => (7,9+1)
             ,15 => (9+1,7)
@@ -225,7 +237,11 @@ impl DetectState{
         String::from_utf8_lossy(&test_state).to_string()
     }
 
-    fn sample_input(&mut self, sample: u32) -> Option<String>{
+    fn sample_input(&mut self, sample: u32) -> DetectMessage{
+        use DetectMessage::*;
+        if !self.active {
+            return Nothing();
+        }
         self.samples[self.cur_sample] = Some(sample);
         self.cur_sample = (self.cur_sample + 1) % 5;
         if let Some(input) = self.detected_input_num(){
@@ -241,15 +257,22 @@ impl DetectState{
                 }
                 else{
                     println!("TODO send new mapping");
+                    // TODO generate mapping
+                    let mut mapping = String::with_capacity(36);
+                    for i in 0..18{
+                        mapping.push_str(&format!("{:02}", self.map[i]));
+                    }
+                    return Mapping(mapping);
                 }
-                Some("                                                      ".to_string())
+                self.active = false;
+                TestState("                                                      ".to_string())
             }
             else{
-                Some(self.ui())
+                TestState(self.ui())
             }
         }
         else{
-            None
+            Nothing()
         }
     }
 }
@@ -273,7 +296,7 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
     
     let event_thread = thread::spawn(move||{
         let mut command_queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
-        let mut got_challenge = true;
+        let mut got_challenge = false;
 
         fn send_events(got_challenge: &mut bool, command_queue: &mut VecDeque<(String, Vec<String>)>, msg: &mut TcpMessenger){
             if *got_challenge {
@@ -300,13 +323,25 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                                 ,"input" => {
                                     println!("user applied input: {}", args[0]);
                                     if let Ok(input) = u32::from_str(&args[0]){
-                                        if let Some(test_state) = detect_state.sample_input(input){
-                                            command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                                        use DetectMessage::*;
+                                        match detect_state.sample_input(input){
+                                            Nothing() => {
+                                                // do nothing
+                                            }
+                                            ,TestState(test_state) => {
+                                                command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                                            }
+                                            ,Mapping(mapping) => {
+                                                command_queue.push_back(("input_mapping".to_string(), vec![mapping]));
+                                            }
                                         }
                                     }
                                     else {
                                         println!("Not a valid number: {}", args[0]);
                                     }
+                                }
+                                ,"twist" => {
+                                    println!("Twist: {}", args[0]);
                                 }
                                 ,r=>{
                                     eprintln!("TODO handle response: {}", r);
@@ -329,6 +364,7 @@ fn start_service_threads() -> io::Result<(JoinHandle<()>, JoinHandle<()>, Sender
                 ,Event::DetectInputs() => {
                     command_queue.push_back(("detect".to_string(), vec!["inputs".to_string()]));
                     detect_state = DetectState::new();
+                    detect_state.activate();
                     let test_state = detect_state.ui();
                     command_queue.push_back(("set_state".to_string(), vec![test_state]));
                 }
@@ -728,6 +764,7 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
                         net_thread = Some(new_net);
                         event_thread = Some(new_events);
                         println!("Connected");
+                        send_command(&sender, "play", vec![]);
                     }
                 }
             }
@@ -758,7 +795,27 @@ fn ui_loop_cli(mut gfx: RenderData, mut data: DataModel){
             }
             ,"detect done" => {
                 println!("Done detecting, sending new config");
-                send_command(&sender, "led_mapping", vec![&cube::serialise_output_map(&led_map)])
+                send_command(&sender, "led_mapping", vec![&cube::serialise_output_map(&led_map)]);
+                send_command(&sender, "play", vec![]);
+            }
+            ,"start" => {
+                data.cube = cube_model::Cube::new();
+                let mut last_twist = Twist::from_string("F").unwrap();
+                let mut twist = Twist::from_string("F").unwrap();
+                let mut rng = rand::rngs::OsRng;
+                // A very naive scramble algorithm
+                for i in 0..30{
+                    while twist == last_twist{
+                        twist = Twist{
+                            face: rng.gen_range(0..6)
+                            ,reverse: rng.gen_bool(0.5)
+                        }
+                    }
+                    last_twist = twist;
+                    data.cube.twist(twist);
+                }
+                send_command(&sender, "set_state", vec![&data.cube.serialise()]);
+                send_command(&sender, "play", vec![]);
             }
             ,"" => {}
             ,cmd => {

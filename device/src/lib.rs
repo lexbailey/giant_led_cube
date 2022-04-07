@@ -72,6 +72,13 @@ pub extern "C" fn twist_cube(cube: *mut Cube, s: *const u8, l: u32){
 }
 
 #[no_mangle]
+pub extern "C" fn is_solved(cube: *mut Cube) -> i32{
+    unsafe {
+        if (*cube).is_solved() {1} else {0}
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn remap_outputs(mapping: *mut OutputMap5Faces, newmap: *const u8){
     for i in 0..5{
         let f = i * 9;

@@ -1323,6 +1323,8 @@ dependencies = [
  "cube_model",
  "pest",
  "plain_authentic_commands",
+ "serde",
+ "serde_json",
  "serialport",
 ]
 

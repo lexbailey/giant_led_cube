@@ -8,12 +8,17 @@ use std::str::FromStr;
 use plain_authentic_commands::{MessageHandler, ParseStatus};
 extern crate pest;
 use pest::Parser;
+use serde::{Deserialize, Serialize};
+use serde_json::Result;
+use std::fs::File;
+use std::path::Path;
 
-
-use cube_model::Cube;
+use cube_model::{Cube, Twist};
 
 #[derive(CLIParser, Debug)]
 struct Args{
+    #[clap()]
+    config: String,
     #[clap()]
     device: String,
     #[clap(long)]
@@ -22,10 +27,17 @@ struct Args{
     serial: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct CubeConfig{
+    led_map: String
+    ,input_map: String
+    ,secret: String
+}
+
 enum GUIEvent{
     RawInput(i32) // The GPIO pin number
     ,Twist(cube_model::Twist)
-    ,Complete()
+    ,Solved()
 }
 
 use std::marker::Send;
@@ -42,11 +54,14 @@ enum ClientEvent{
     ,StartDetectLED()
     ,StartDetectSwitches()
     ,UpdateLEDMap(String)
+    ,UpdateInputMap(String)
     ,Play()
 }
 
 enum DeviceEvent{
     Switch(i32)
+    ,Solved()
+    ,Twist(Twist)
 }
 
 enum Event{
@@ -124,6 +139,18 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                     let new_mapping = &args[0];
                                     sender.send(Event::Client(ClientEvent::UpdateLEDMap(new_mapping.clone())));
                                 }
+                                ,"input_mapping" => {
+                                    if args.len() != 1{
+                                        let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                        write_stream.write(msg.as_bytes());
+                                    }
+                                    let new_mapping = &args[0];
+                                    sender.send(Event::Client(ClientEvent::UpdateInputMap(new_mapping.clone())));
+
+                                }
+                                ,"play" => {
+                                    sender.send(Event::Client(ClientEvent::Play()));
+                                }
                                 ,_=>{
                                     let msg = auth.construct_reply("unknown_command", &vec![&command]);
                                     write_stream.write(msg.as_bytes());
@@ -144,8 +171,14 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                             let msg = auth.construct_reply("input", &vec![&format!("{}", i)]);
                             write_stream.write(msg.as_bytes());
                         }
-                        ,GUIEvent::Twist(t) => { println!("TODO: send event twist");}
-                        ,GUIEvent::Complete() => { println!("TODO: send event complete");}
+                        ,GUIEvent::Twist(t) => {
+                            let msg = auth.construct_reply("twist", &vec![&format!("{}", t)]);
+                            write_stream.write(msg.as_bytes());
+                        }
+                        ,GUIEvent::Solved() => {
+                            let msg = auth.construct_reply("solved", &vec![]);
+                            write_stream.write(msg.as_bytes());
+                        }
                     }
                 }
             }
@@ -166,6 +199,14 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
     stream_thread.join();
 }
 
+fn persist_config(config: &CubeConfig, file: &str) {
+    let p = Path::new(file);
+    match File::create(p) {
+        Err(e) => {println!("Unable to persist config to file '{}': {}", file, e);}
+        ,Ok(f) => {serde_json::to_writer_pretty(f, config);}
+    }
+}
+
 fn main() {
     println!("Cube service");
 
@@ -177,10 +218,27 @@ fn main() {
     }
 
     println!("Configuration:");
+    println!("    Config file: {}", args.config);
     println!("    Device:      {}", args.device);
     println!("    TCP listen:  {}", args.tcp.as_ref().unwrap_or(&"(no TCP interface)".to_string()));
     println!("    Serial port: {}", args.serial.as_ref().unwrap_or(&"(no serial interface)".to_string()));
 
+    let mut config: CubeConfig = {
+        let p = Path::new(&args.config);
+        match File::open(p) {
+            Ok(f) => match serde_json::from_reader(f) {
+                Ok(d) => d
+                ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
+            }
+            ,Err(_) => serde_json::from_str(
+                r#"{
+                    "led_map": "000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758"
+                    ,"input_map": "000102030405060708091011121314151617"
+                    ,"secret": ""
+                }"#
+            ).unwrap()
+        }
+    };
 
     let (tcp_thread, serial_thread, device_thread) = {
         let (sender, receiver) = channel::<Event>();
@@ -199,8 +257,10 @@ fn main() {
             device.set_timeout(Duration::from_secs(10));
             let mut switch_num: [u8;2] = [0,0];
             let mut num_pos = 0;
+            let mut twist_id: [u8;2] = [0,0];
+            let mut twist_pos = 0;
             #[derive(Debug)]
-            enum Mode {Normal, ParseNum}
+            enum Mode {Normal, ParseNum, ParseTwist}
             use Mode::*;
             let mut mode = Normal;
             loop{
@@ -228,9 +288,40 @@ fn main() {
                                     }
                                 }
                                 ,(ParseNum, d) => {
-                                    switch_num[num_pos] = d;
-                                    num_pos += 1;
+                                    if num_pos < 2{
+                                        switch_num[num_pos] = d;
+                                        num_pos += 1;
+                                    }
+                                    else{
+                                        mode = Normal; // malformed, ignore
+                                    }
                                 }
+                                ,(Normal, b'#') => {
+                                        dev_sender.send(Event::Device(DeviceEvent::Solved()));
+                                }
+                                ,(Normal, b'*') => {
+                                    num_pos = 0;
+                                    twist_id = [b' ',b' '];
+                                    mode = ParseTwist;
+                                }
+                                ,(ParseTwist, b';') => {
+                                    // end of twist
+                                    mode = Normal;
+                                    if let Ok(t) = Twist::from_bytes(&twist_id){
+                                        println!("Twist: {}", t);
+                                        dev_sender.send(Event::Device(DeviceEvent::Twist(t)));
+                                    }
+                                }
+                                ,(ParseTwist, d) => {
+                                    if twist_pos < 2{
+                                        twist_id[twist_pos] = d;
+                                        twist_pos += 1;
+                                    }
+                                    else{
+                                        mode = Normal; // malformed, ignore
+                                    }
+                                }
+
                                 ,(Normal, c) => {} //unknown char
                             }
                         }
@@ -238,8 +329,10 @@ fn main() {
                 }
             }
         });
-        println!("{:?}", device_write.write(b"cuWWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYYp\r\n"));
-        println!("{:?}", device_write.flush());
+        device_write.write(format!("ca{}\r\n", config.input_map).as_bytes());
+        device_write.write(format!("cm{}\r\n", config.led_map).as_bytes());
+        device_write.write(b"cuWWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYYp\r\n");
+        device_write.flush();
 
         let tcp_thread = if let Some(listen) = args.tcp {
             let listener = TcpListener::bind(listen);
@@ -320,6 +413,16 @@ fn main() {
                             device_write.write(b"cm");
                             device_write.write(new_map.as_bytes());
                             device_write.flush();
+                            config.led_map = new_map;
+                            persist_config(&config, &args.config);
+                        }
+                        ,ClientEvent::UpdateInputMap(new_map) => {
+                            println!("input map update");
+                            device_write.write(b"ca");
+                            device_write.write(new_map.as_bytes());
+                            device_write.flush();
+                            config.input_map = new_map;
+                            persist_config(&config, &args.config);
                         }
                         ,ClientEvent::Play() => {
                             device_write.write(b"p");
@@ -332,9 +435,20 @@ fn main() {
                 }
                 Event::Device(d_ev) => {
                     match d_ev {
+                        // TODO unify these events so I don't have to unwrap and re-wrap them???
                         DeviceEvent::Switch(n) => {
                             if let Some(sender) = gui_sender.as_ref(){
                                 let _ignored = sender.send(StreamEvent::GUI(GUIEvent::RawInput(n)));
+                            }
+                        }
+                        ,DeviceEvent::Solved() => {
+                            if let Some(sender) = gui_sender.as_ref(){
+                                let _ignored = sender.send(StreamEvent::GUI(GUIEvent::Solved()));
+                            }
+                        }
+                        ,DeviceEvent::Twist(t) => {
+                            if let Some(sender) = gui_sender.as_ref(){
+                                let _ignored = sender.send(StreamEvent::GUI(GUIEvent::Twist(t)));
                             }
                         }
                     }

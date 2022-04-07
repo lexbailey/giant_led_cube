@@ -24,9 +24,19 @@ uint32_t led_data[45];
 #define MODE_SWITCHMAP_READ (4)
 
 #define NUM_SUBFACES (6*9)
+#define NUM_SWITCH_INPUTS (20)
+#define MAX_INPUT_NUM (23)
+#define NUM_TWISTS (18)
 
-char inbuf[10];
-volatile char update_buffer[(NUM_SUBFACES*2)+1]; // big enough for two chars per subface
+#define FACES_BUFLEN ((NUM_SUBFACES*2)+1)
+#define INPUTS_BUFLEN ((NUM_TWISTS*2)+1)
+
+#if FACES_BUFLEN > INPUTS_BUFLEN
+#define BUFLEN FACES_BUFLEN
+#else
+#define BUFLEN INPUTS_BUFLEN
+#endif
+volatile char update_buffer[BUFLEN]; // big enough for two chars per subface, or for all the inputs
 
 void update_leds(PicoLed::PicoLedController ledStrip){
     //printf("a\r\n");
@@ -39,7 +49,6 @@ void update_leds(PicoLed::PicoLedController ledStrip){
     sleep_ms(2);
 }
 
-#define NUM_SWITCH_INPUTS (20)
 const int switch_inputs[NUM_SWITCH_INPUTS] = {
     2,3,4,5
     ,6,22,8,9
@@ -50,7 +59,8 @@ const int switch_inputs[NUM_SWITCH_INPUTS] = {
 
 const char* blank = "f ";
 
-const char* switch_map[24];
+
+const char* switch_map[MAX_INPUT_NUM+1];
 /*
  = {
 "  "
@@ -118,6 +128,9 @@ void switch_isr(uint gpio, uint32_t events){
             if (mode == MODE_PLAY) {
                 printf("*%s;\n", twist);
                 twist_cube(thecube, (uint8_t*)twist, 2);
+                if (is_solved(thecube)) {
+                    printf("#\n");
+                }
             }
         }
     }
@@ -177,27 +190,41 @@ int main(){
             }
             else {
                 if (mode == MODE_UPDATE_READ){
-                    update_buffer[update_pos++] = c;
-                    if (update_pos >= NUM_SUBFACES) {
-                        mode = next_mode;
-                        update_from_string(thecube, (uint8_t *)update_buffer);
+                    if ((update_pos) >= BUFLEN) { printf("?badstateupdate"); }
+                    else{
+                        update_buffer[update_pos++] = c;
+                        if (update_pos >= NUM_SUBFACES) {
+                            mode = next_mode;
+                            update_from_string(thecube, (uint8_t *)update_buffer);
+                        }
                     }
                 }
                 if (mode == MODE_LEDMAP_READ){
-                    update_buffer[update_pos++] = c-48;
-                    if (update_pos >= 90) {
-                        mode = next_mode;
-                        remap_outputs(mapping, (uint8_t *)update_buffer);
+                    if ((update_pos) >= BUFLEN) { printf("?badstateledmap"); }
+                    else{
+                        update_buffer[update_pos++] = c-48;
+                        if (update_pos >= 90) {
+                            mode = next_mode;
+                            remap_outputs(mapping, (uint8_t *)update_buffer);
+                        }
                     }
                 }
                 if (mode == MODE_SWITCHMAP_READ){
-                    update_buffer[update_pos++] = c;
-                    if (update_pos >= (18*2)) {
-                        mode = next_mode;
-                        for (int i = 0; i<= 18-1; i++){
-                            int p = i*2;
-                            int switch_num = ((update_buffer[p]-48)*10) + update_buffer[p+1];
-                            switch_map[switch_num] = twists[i];
+                    if ((update_pos) >= BUFLEN) { printf("?badstateswitchmap"); }
+                    else{
+                        update_buffer[update_pos++] = c;
+                        if (update_pos >= (18*2)) {
+                            mode = next_mode;
+                            for (int i = 0; i<= 18-1; i++){
+                                int p = i*2;
+                                int switch_num = ((update_buffer[p]-48)*10) + (update_buffer[p+1]-48);
+                                if (switch_num > MAX_INPUT_NUM){
+                                    printf("?numtoohigh"); //wut?
+                                }
+                                else {
+                                    switch_map[switch_num] = twists[i];
+                                }
+                            }
                         }
                     }
                 }
