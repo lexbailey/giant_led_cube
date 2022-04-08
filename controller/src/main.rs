@@ -256,8 +256,6 @@ impl DetectState{
                     println!("Some inputs were duplicated, this config is invalid, try again.");
                 }
                 else{
-                    println!("TODO send new mapping");
-                    // TODO generate mapping
                     let mut mapping = String::with_capacity(36);
                     for i in 0..18{
                         mapping.push_str(&format!("{:02}", self.map[i]));
