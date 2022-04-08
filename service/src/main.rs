@@ -20,8 +20,10 @@ struct Args{
     config: String,
     #[clap()]
     device: String,
+    /// TCP addr:port to listen on to serve the controller interface (example: --tcp localhost:9876)
     #[clap(long)]
     tcp: Option<String>,
+    /// Name of a serial device to use to serve the controller interface (example: --serial /dev/ttyUSB0)
     #[clap(long)]
     serial: Option<String>,
 }
@@ -224,7 +226,8 @@ fn main() {
     let args = Args::parse();
     if args.tcp .is_none() && args.serial.is_none(){
         eprintln!("No interfaces specified");
-        eprintln!("TODO: provide more useful help text here");
+        eprintln!("Specify at least one of --tcp and --serial");
+        eprintln!("See --help for details");
         std::process::exit(1);
     }
 
