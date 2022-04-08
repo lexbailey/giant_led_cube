@@ -244,6 +244,7 @@ fn main() {
                 Ok(d) => d
                 ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
             }
+            // TODO handle secrets better
             ,Err(_) => serde_json::from_str(
                 r#"{
                     "led_map": "000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758"
