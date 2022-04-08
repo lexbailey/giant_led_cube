@@ -33,14 +33,14 @@ struct CubeConfig{
     ,secret: String
 }
 
-enum GUIEvent{
-    RawInput(i32) // The GPIO pin number
-    ,Twist(cube_model::Twist)
+enum DeviceEvent{
+    Switch(i32)
     ,Solved()
+    ,Twist(Twist)
 }
 
 enum StreamEvent{
-    GUI(GUIEvent)
+    GUI(DeviceEvent)
     ,RecvLine(Vec<u8>)
     ,EOS()
 }
@@ -53,12 +53,6 @@ enum ClientEvent{
     ,UpdateLEDMap(String)
     ,UpdateInputMap(String)
     ,Play()
-}
-
-enum DeviceEvent{
-    Switch(i32)
-    ,Solved()
-    ,Twist(Twist)
 }
 
 enum Event{
@@ -163,15 +157,15 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                             }
                             ,GUI(e) => {
                                 match e {
-                                    GUIEvent::RawInput(i) => {
+                                    DeviceEvent::Switch(i) => {
                                         let msg = auth.construct_reply("input", &vec![&format!("{}", i)]);
                                         write_stream.write(msg.as_bytes())?;
                                     }
-                                    ,GUIEvent::Twist(t) => {
+                                    ,DeviceEvent::Twist(t) => {
                                         let msg = auth.construct_reply("twist", &vec![&format!("{}", t)]);
                                         write_stream.write(msg.as_bytes())?;
                                     }
-                                    ,GUIEvent::Solved() => {
+                                    ,DeviceEvent::Solved() => {
                                         let msg = auth.construct_reply("solved", &vec![]);
                                         write_stream.write(msg.as_bytes())?;
                                     }
@@ -195,7 +189,7 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
             Ok(line) => {
                 match stream_sender.send(StreamEvent::RecvLine(line)) {
                     Err(e) => {
-                        println!("Internal error sedding event to event handler.");
+                        println!("Internal error sedding event to event handler: {:?}", e);
                         break;
                     }
                     ,Ok(_) =>{}
@@ -466,22 +460,10 @@ fn main() {
                 }
             }
             Event::Device(d_ev) => {
-                match d_ev {
-                    // TODO unify these events so I don't have to unwrap and re-wrap them???
-                    DeviceEvent::Switch(n) => {
-                        if let Some(sender) = gui_sender.as_ref(){
-                            let _ignored = sender.send(StreamEvent::GUI(GUIEvent::RawInput(n)));
-                        }
-                    }
-                    ,DeviceEvent::Solved() => {
-                        if let Some(sender) = gui_sender.as_ref(){
-                            let _ignored = sender.send(StreamEvent::GUI(GUIEvent::Solved()));
-                        }
-                    }
-                    ,DeviceEvent::Twist(t) => {
-                        if let Some(sender) = gui_sender.as_ref(){
-                            let _ignored = sender.send(StreamEvent::GUI(GUIEvent::Twist(t)));
-                        }
+                if let Some(sender) = gui_sender.as_ref(){
+                    match sender.send(StreamEvent::GUI(d_ev)) {
+                        Err(e) => {println!("Failed to send device event to client, client disconnected?: {:?}", e)}
+                        ,Ok(_) => {}
                     }
                 }
             }
