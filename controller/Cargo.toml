@@ -5,16 +5,16 @@ edition = "2021"
 
 [features]
 opengl = ["gl", "glutin"]
-cli = []
+cli = ["rustyline"]
 
 [[bin]]
-name = "cube_control_opengl"
-path = "src/main.rs"
+name = "cube_control_gui"
+path = "src/gui_ogl.rs"
 required-features = ["opengl"]
 
 [[bin]]
 name = "cube_control_cli"
-path = "src/main.rs"
+path = "src/cli.rs"
 required-features = ["cli"]
 
 [dependencies]
@@ -23,3 +23,4 @@ gl = { version="0.14.0", optional=true }
 rand = "0.8.5"
 cube_model = {path="../cube_model"}
 plain_authentic_commands = { path="../plain_authentic_commands" }
+rustyline = { version="9.1.2", optional=true }

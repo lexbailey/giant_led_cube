@@ -1,3 +1,6 @@
+#[cfg(all(feature="cli", feature="opengl"))]
+compile_error!("Cannot compile with both the opengl interface _and_ the cli interface. Choose only one.");
+
 #[cfg(feature="opengl")]
 extern crate gl;
 #[cfg(feature="opengl")]
@@ -9,14 +12,19 @@ use cube::{Output, OutputMap5Faces, Twist};
 
 #[cfg(feature="opengl")]
 use gl::types::*;
+#[cfg(feature="opengl")]
 use std::mem;
+#[cfg(feature="opengl")]
 use std::ptr;
 use std::str;
+#[cfg(feature="opengl")]
 use std::os::raw::c_void;
+#[cfg(feature="opengl")]
 use std::ffi::CString;
 use std::time::{Instant,Duration};
 use rand::Rng;
 use std::process::Command;
+#[cfg(feature="opengl")]
 use std::cell::RefCell;
 use std::io::{self,Read,Write,BufRead,BufReader};
 use std::net::TcpStream;
@@ -863,9 +871,6 @@ fn ui_loop(mut gfx: RenderData, mut data: DataModel){
     #[cfg(feature="cli")]
     ui_loop_cli(gfx, data);
 }
-
-#[cfg(all(feature="cli", feature="opengl"))]
-compile_error!("Cannot compile with both the opengl interface _and_ the cli interface. Choose only one.");
 
 fn main() {
     
