@@ -1,5 +1,5 @@
 mod client;
-use client::{start_client, ToGUI, FromGUI};
+use client::{start_client, ToGUI, FromGUI, ClientState};
 
 use cube_model as cube;
 use cube_model::{Cube, Output, OutputMap5Faces, Twist};
@@ -67,7 +67,8 @@ fn init_render_data() -> RenderData{
     }
 }
 
-fn draw(gfx: &RenderData, cube: Cube){
+fn draw(gfx: &RenderData, state: &ClientState){
+    let cube = state.cube;
     fn nb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string(i.to_string(), f.subfaces[i].color, &tc) }
     fn bb (f: &cube::Face, i:usize, tc: &TermCols) -> String{ color_string("".to_string(), f.subfaces[i].color, &tc) }
 
@@ -111,6 +112,11 @@ fn draw(gfx: &RenderData, cube: Cube){
     println!("              ┃ {} {} {} ┃", bb(f, 6), bb(f, 7), bb(f, 8));
     println!("              ┗━━━━━━━━━━━━━┛");
     println!("              Front ({})", cube::FRONT);
+
+    if state.detect_state.active{
+        println!("Detecting switch input for twist: {}", state.detect_state.twist);
+        println!("Push the switch between the RED and GREEN LEDs towards the GREEN LED");
+    }
 }
 
 
@@ -162,14 +168,18 @@ fn main() {
                                 println!("Connected to server");
                             }
                             else{
-                                println!("Disconnected from server. Trying to reconnect...");
+                                println!("Disconnected from server. Some events may have been dropped. Trying to reconnect...");
                                 // TODO try to reconnect (with exponential backoff?)
                             }
                         }
                         ,MissingConnection() => {
                             println!("Internal error: Know known method of connecting to server.");
                         }
-                        ,StateUpdate() => {println!("Todo: client event: {:?}",ev);}
+                        ,StateUpdate() => {
+                            let data = state.lock().unwrap();
+                            draw(&gfx, &*data);
+                            
+                        }
                         ,GameEnd() => {println!("TODO game end");}
                     }
                 }
@@ -177,12 +187,10 @@ fn main() {
                     match command.as_ref(){
                         "show" => {
                             let data = state.lock().unwrap();
-                            draw(&gfx, data.cube);
+                            draw(&gfx, &*data);
                         }
                         ,"solved" => {
-                            //data.cube = cube_model::Cube::new();
-                            //send_command(&sender, "set_state", vec![&data.cube.serialise()]);
-                            //draw(&gfx, &data);
+                            sender.send(SetState(Cube::new()));
                         }
                         ,"detect leds" => {
                             //println!("Starting LED detect sequence...");
@@ -195,6 +203,7 @@ fn main() {
                             //println!("Starting input detect sequence...");
                             //println!("Use 'detect next' to move to next input");
                             //send_event(&sender, Event::DetectInputs());
+                            sender.send(DetectInputs());
                         }
                         ,"detect next" => {
                             //println!("Next item...");
@@ -211,41 +220,41 @@ fn main() {
                         }
                         ,"" => {}
                         ,cmd => {
-                            //let mut parts = cmd.split(' ');
-                            //let name = parts.next().unwrap();
-                            //let args_str = &cmd[name.len()..cmd.len()];
-                            //let args = parts.collect::<Vec<&str>>();
-                            //match name.as_ref(){
-                            //    "twist" => {
-                            //        match data.cube.twists(args_str){
-                            //            Err(msg) => {println!("Error: {}", msg)}
-                            //            ,Ok(_) => {
-                            //                send_command(&sender, "set_state", vec![&data.cube.serialise()]);
-                            //                draw(&gfx, &data);
-                            //                println!("Done twists.");
-                            //            }
-                            //        }
-                            //    }
-                            //    ,"map" => {
-                            //        if args.len() != 2{
-                            //            println!("map requires two parameters");
-                            //        }
-                            //        else{
-                            //            if let Ok((f, s)) = (||{
-                            //                Result::<(usize, usize), std::num::ParseIntError>::Ok((
-                            //                    usize::from_str(args[0])?
-                            //                    ,usize::from_str(args[1])?
-                            //                ))
-                            //            })() {
-                            //                led_map[detecting_led as usize] = Output{face:f, subface:s};
-                            //                println!("mapped led {} to (face, subface) = ({}, {})", detecting_led, f, s);
-                            //                detecting_led += 1;
-                            //                detect_led_ui(detecting_led, &sender);
-                            //            }
-                            //        }
-                            //    }
-                            //    ,_ => {println!("Unknown command: {}",cmd);}
-                            //}
+                            let mut parts = cmd.split(' ');
+                            let name = parts.next().unwrap();
+                            let args_str = &cmd[name.len()..cmd.len()];
+                            let args = parts.collect::<Vec<&str>>();
+                            match name.as_ref(){
+                                "twist" => {
+                                    let mut data = state.lock().unwrap();
+                                    match data.cube.twists(args_str){
+                                        Err(msg) => {println!("Error: {}", msg)}
+                                        ,Ok(_) => {
+                                            sender.send(SyncState());
+                                            draw(&gfx, &data);
+                                        }
+                                    }
+                                }
+                                //,"map" => {
+                                //    if args.len() != 2{
+                                //        println!("map requires two parameters");
+                                //    }
+                                //    else{
+                                //        if let Ok((f, s)) = (||{
+                                //            Result::<(usize, usize), std::num::ParseIntError>::Ok((
+                                //                usize::from_str(args[0])?
+                                //                ,usize::from_str(args[1])?
+                                //            ))
+                                //        })() {
+                                //            led_map[detecting_led as usize] = Output{face:f, subface:s};
+                                //            println!("mapped led {} to (face, subface) = ({}, {})", detecting_led, f, s);
+                                //            detecting_led += 1;
+                                //            detect_led_ui(detecting_led, &sender);
+                                //        }
+                                //    }
+                                //}
+                                ,_ => {println!("Unknown command: {}",cmd);}
+                            }
                         }
                     }
                     gui_release();

@@ -454,6 +454,7 @@ fn main() {
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
+                            // TODO sync state on connect: sender.send(StreamEvent::GUI(GUIEvent::SyncState(somethingsomething)));
                         }
                     }
                     Ok(())

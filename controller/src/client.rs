@@ -17,12 +17,12 @@ use std::collections::HashSet;
 use plain_authentic_commands::{MessageHandler, ParseStatus};
 
 pub struct DetectState {
-    twist: usize
-    ,cur_sample: usize
-    ,samples: [Option<u32>;5]
-    ,map: [u32;18]
-    ,complete: bool
-    ,active: bool
+    pub twist: usize
+    ,pub cur_sample: usize
+    ,pub samples: [Option<u32>;5]
+    ,pub map: [u32;18]
+    ,pub complete: bool
+    ,pub active: bool
 }
 
 enum DetectMessage {
@@ -69,7 +69,7 @@ impl DetectState{
         }
     }
 
-    fn ui(&mut self) -> String{
+    fn get_led_state(&mut self) -> String{
         let mut test_state = [b' ';54];
         let (red, green) = match self.twist {
             0 => (8,4*9)
@@ -97,7 +97,6 @@ impl DetectState{
         };
         test_state[red] = b'R';
         test_state[green] = b'G';
-        println!("Push the switch between the red and green LEDs towards the green LED. Repeat several times to continue.");
         String::from_utf8_lossy(&test_state).to_string()
     }
 
@@ -115,6 +114,7 @@ impl DetectState{
             self.twist += 1;
             if self.twist > 17 {
                 self.complete = true;
+                self.active = false;
                 let duplicates = self.map.iter().collect::<HashSet<_>>().len() != self.map.len();
                 if duplicates {
                     println!("Some inputs were duplicated, this config is invalid, try again.");
@@ -126,11 +126,10 @@ impl DetectState{
                     }
                     return Mapping(mapping);
                 }
-                self.active = false;
                 TestState("                                                      ".to_string())
             }
             else{
-                TestState(self.ui())
+                TestState(self.get_led_state())
             }
         }
         else{
@@ -185,6 +184,8 @@ pub enum FromGUI {
     ,DetectLEDs()
     ,DetectInputs()
     ,StartGame()
+    ,SetState(Cube)
+    ,SyncState()
 }
 
 #[derive(Debug)]
@@ -199,6 +200,7 @@ pub enum ToGUI {
 enum Event {
     ServiceMessage(Vec<u8>)
     ,FromGUI(FromGUI)
+    ,NetworkTimeout()
 }
 
 fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
@@ -364,12 +366,47 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
 
     let mut msg: Option<TcpMessenger> = None;
 
+    const timeout_seconds: u64 = 3;
+
     let thread = thread::spawn(move||{
         let mut command_queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
         let mut got_challenge = false;
 
-
         let mut net_thread: Option<JoinHandle<()>> = None;
+        let mut timeout_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let mut timeout_time_2 = Arc::clone(&timeout_time);
+        let time_send = sender.clone();
+
+        let timeout_thread = thread::spawn(move||{
+            loop {
+                let t = {
+                    *timeout_time_2.lock().unwrap()
+                };
+                match t{
+                    Some(t) => {
+                        let now = Instant::now();
+                        let do_wait = t > now;
+                        if !do_wait{
+                            time_send.send(Event::NetworkTimeout());
+                            thread::sleep(Duration::from_secs(timeout_seconds));
+                        } 
+                        else{
+                            thread::sleep(t - now);
+                            let mut t2 = timeout_time_2.lock().unwrap();
+                            if let Some(t2) = *t2{
+                                if t2 < Instant::now(){
+                                    time_send.send(Event::NetworkTimeout());
+                                }
+                            }
+                        }
+                    }
+                    ,None => {
+                        thread::sleep(Duration::from_secs(timeout_seconds));
+                    }
+                }
+            }
+        });
+        
 
         fn start_service_handler(net_thread: &mut Option<JoinHandle<()>>, service_sender: Sender<Event>, mut reader: TcpStream) {
             if net_thread.is_some() {
@@ -380,9 +417,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
             }));
         }
 
-
-        fn send_events(got_challenge: &mut bool, command_queue: &mut VecDeque<(String, Vec<String>)>, msg: Option<&mut TcpMessenger>) -> Vec<ToGUI>{
-            println!("Send events...");
+        fn send_events(got_challenge: &mut bool, command_queue: &mut VecDeque<(String, Vec<String>)>, msg: Option<&mut TcpMessenger>, timeout_time: &mut Arc<Mutex<Option<Instant>>>) -> Vec<ToGUI>{
             let mut results = vec![];
             if msg.is_none(){
                 *got_challenge = false;
@@ -394,6 +429,8 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                     let m_args = args.iter().map(|a|a.as_ref()).collect();
                     *got_challenge = false;
                     let msg = msg.unwrap();
+                    let mut t = timeout_time.lock().unwrap();
+                    *t = Some(Instant::now() + Duration::from_secs(timeout_seconds));
                     match msg.send_command(&command, &m_args) {
                         Ok(_) => {}
                         ,Err(e) => { // Probably no longer connected
@@ -408,22 +445,38 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
             results
         }
 
-        //command_queue.push_back(("set_state".to_string(), vec![test_state]));
-
         for event in receiver.iter(){
             use Event::*;
             match event {
-                ServiceMessage(s) => {
+                NetworkTimeout() => {
                     if let Some(msg) = msg.as_mut(){
+                        let mut t = timeout_time.lock().unwrap();
+                        *t = Some(Instant::now() + Duration::from_secs(timeout_seconds));
+                        let r = msg.connect();
+                        match r {
+                            Ok(_) => {
+                                start_service_handler(&mut net_thread, service_sender.clone(), msg.stream.as_ref().unwrap().try_clone().unwrap());
+                                to_gui_sender.send(ToGUI::Connected(true));
+                            }
+                            Err(e) => {
+                                to_gui_sender.send(ToGUI::Connected(false));
+                            }
+                        }
+                    }
+                }
+                ,ServiceMessage(s) => {
+                    if let Some(msg) = msg.as_mut(){
+                        {
+                            let mut t = timeout_time.lock().unwrap();
+                            *t = None;
+                        }
                         match msg.handler.parse_response(&s) {
                             ParseStatus::Success(response, args) => {
                                 match response.as_ref() {
                                     "challenge" => {
-                                        println!("got challenge");
                                         got_challenge = true;
                                     }   
                                     ,"input" => {
-                                        println!("user applied input: {}", args[0]);
                                         if let Ok(input) = u32::from_str(&args[0]){
                                             use DetectMessage::*;
                                             let mut state = state.lock().unwrap();
@@ -432,19 +485,39 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                     // do nothing
                                                 }
                                                 ,TestState(test_state) => {
+                                                    state.cube.deserialise(&test_state);
                                                     command_queue.push_back(("set_state".to_string(), vec![test_state]));
                                                 }
                                                 ,Mapping(mapping) => {
+                                                    state.cube = Cube::new();
                                                     command_queue.push_back(("input_mapping".to_string(), vec![mapping]));
+                                                    command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
+                                                    command_queue.push_back(("play".to_string(), vec![]));
                                                 }
                                             }
                                         }
                                         else {
                                             println!("Not a valid number: {}", args[0]);
                                         }
+                                        to_gui_sender.send(ToGUI::StateUpdate());
                                     }
                                     ,"twist" => {
-                                        println!("Twist: {}", args[0]);
+                                        if args.len() >= 1{
+                                            let mut state = state.lock().unwrap();
+                                            Twist::from_string(&args[0]).and_then(|t|Ok(state.cube.twist(t)));
+                                            to_gui_sender.send(ToGUI::StateUpdate());
+                                        }
+                                    }
+                                    ,"state" => {
+                                        if args.len() >= 1{
+                                            let mut state = state.lock().unwrap();
+                                            state.cube.deserialise(&args[0]);
+                                        }
+                                    }
+                                    ,"solved" => {
+                                        let mut state = state.lock().unwrap();
+                                        state.cube = Cube::new();
+                                        to_gui_sender.send(ToGUI::StateUpdate());
                                     }
                                     ,r=>{
                                         eprintln!("TODO handle response: {}", r);
@@ -468,6 +541,10 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                     match e {
                         Connect(secret, addr) => {
                             let mut m = TcpMessenger::new(secret, &addr);
+                            {
+                                let mut t = timeout_time.lock().unwrap();
+                                *t = Some(Instant::now() + Duration::from_secs(timeout_seconds));
+                            }
                             let r = m.connect();
                             match r {
                                 Ok(_) => {
@@ -482,7 +559,16 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                         }
 
                         ,DetectLEDs() => {println!("TODO leds detect");}
-                        ,DetectInputs() => {println!("TODO inputs detect");}
+                        ,DetectInputs() => {
+                            let mut state = state.lock().unwrap();
+                            command_queue.push_back(("detect".to_string(), vec!["inputs".to_string()]));
+                            state.detect_state = DetectState::new();
+                            state.detect_state.activate();
+                            let test_state = state.detect_state.get_led_state();
+                            state.cube.deserialise(&test_state);
+                            command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                            to_gui_sender.send(ToGUI::StateUpdate());
+                        }
                         ,StartGame() => {
                             let mut state = state.lock().unwrap();
                             state.cube = cube_model::Cube::new();
@@ -500,15 +586,22 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 last_twist = twist;
                                 state.cube.twist(twist);
                             }
-                            println!("done start");
                             command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
                             command_queue.push_back(("play".to_string(), vec![]));
-                            println!("done start2");
+                        }
+                        ,SetState(cube) => {
+                            let mut state = state.lock().unwrap();
+                            state.cube = cube;
+                            command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
+                        }
+                        ,SyncState() => {
+                            let mut state = state.lock().unwrap();
+                            command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
                         }
                     }
                 }
             }
-            let replies = send_events(&mut got_challenge, &mut command_queue, msg.as_mut());
+            let replies = send_events(&mut got_challenge, &mut command_queue, msg.as_mut(), &mut timeout_time);
             for reply in replies{
                 to_gui_sender.send(reply);
             }
