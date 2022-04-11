@@ -1,21 +1,16 @@
 mod client;
-use client::{start_client, ToGUI, FromGUI, ClientState};
+use client::{start_client, ToGUI, ClientState};
 
 use cube_model as cube;
 use cube_model::{Cube, Output, OutputMap5Faces, Twist};
 
 use std::str;
-use std::time::{Instant,Duration};
 use rand::Rng;
 use std::process::Command;
-use std::io::{self,Read,Write,BufRead,BufReader};
-use std::net::TcpStream;
-use std::sync::mpsc::{channel,Sender};
-use std::sync::{Arc,Mutex,Condvar,Barrier};
-use std::thread::{self,Thread,JoinHandle};
-use std::collections::VecDeque;
+use std::sync::mpsc::{channel};
+use std::sync::{Arc,Mutex};
+use std::thread;
 use std::str::FromStr;
-use std::collections::HashSet;
 
 use plain_authentic_commands::{MessageHandler, ParseStatus};
 
@@ -132,7 +127,7 @@ fn main() {
     use rustyline::error::ReadlineError;
     use rustyline::Editor;
 
-    let (state, sender, c_receiver, client) = client::start_client();
+    let (state, sender, c_receiver, client) = start_client();
 
     // The same event loop will handle client events and user events, so we need a type that encapsulates both
     enum CLIEvent{
@@ -152,8 +147,6 @@ fn main() {
 
     let secret = b"secret".to_vec(); // TODO load from file
     let addr = "localhost:9876".to_string(); // TODO load from tile
-
-    let input_wait = Arc::new((Mutex::new(false), Condvar::new()));
 
     let mutex = Arc::new(Mutex::new(()));
     let mutex2 = Arc::clone(&mutex);
