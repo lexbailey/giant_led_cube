@@ -8,29 +8,19 @@ use std::ptr;
 use std::os::raw::c_void;
 use std::ffi::CString;
 use std::time::{Instant,Duration};
-use std::process::Command;
 use std::cell::RefCell;
-use std::io::{self,Read,Write,BufRead,BufReader};
-use std::net::TcpStream;
-use std::sync::mpsc::{channel,Sender};
-use std::thread::{self,Thread,JoinHandle};
-use std::collections::VecDeque;
-use std::str::FromStr;
-use std::collections::HashSet;
 
 mod gl_abstractions;
 use gl_abstractions as gla;
 use gla::{UniformMat4, UniformVec3};
 
-use plain_authentic_commands::{MessageHandler, ParseStatus};
-
 mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
 
 use cube_model as cube;
-use cube_model::{Cube, Output, OutputMap5Faces, Twist};
+use cube::Cube;
 
-use std::sync::{Arc,Mutex,Condvar,Barrier};
+use std::sync::{Arc,Mutex};
 
 
 shader_struct!{
@@ -278,7 +268,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
 fn main() {
     let gfx = init_render_data();
 
-    let (state, sender, c_receiver, client) = client::start_client();
+    let (state, sender, _c_receiver, _client) = start_client();
 
     let secret = b"secret".to_vec(); // TODO load from file
     let addr = "localhost:9876".to_string(); // TODO load from tile

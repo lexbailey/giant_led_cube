@@ -2,17 +2,13 @@ mod client;
 use client::{start_client, ToGUI, ClientState};
 
 use cube_model as cube;
-use cube_model::{Cube, Output, OutputMap5Faces, Twist};
+use cube_model::Cube;
 
 use std::str;
-use rand::Rng;
 use std::process::Command;
-use std::sync::mpsc::{channel};
-use std::sync::{Arc,Mutex};
+use std::sync::mpsc::{channel,SendError};
 use std::thread;
 use std::str::FromStr;
-
-use plain_authentic_commands::{MessageHandler, ParseStatus};
 
 struct TermCols{
     white:String
@@ -141,109 +137,120 @@ fn main() {
     // start a thread to repackage client events
     let client_event_forwarder = thread::spawn(move||{
         for ev in c_receiver.iter(){
-            c_sender.send(Client(ev));
+            let _ignored = c_sender.send(Client(ev));
         }
     });
 
     let secret = b"secret".to_vec(); // TODO load from file
     let addr = "localhost:9876".to_string(); // TODO load from tile
 
-    let mutex = Arc::new(Mutex::new(()));
-    let mutex2 = Arc::clone(&mutex);
-
     let (sync_sender, sync_receiver) = channel();
 
     // Main event loop handles both kinds of events
     let event_loop = thread::spawn(move||{
         use client::FromGUI::*;
-        sender.send(Connect(secret, addr));
-        let gui_release = move||{sync_sender.send(());};
+        if let Err(e) = sender.send(Connect(secret, addr)){
+            println!("Failed to start: {:?}", e);
+            return;
+        }
+        let gui_release = move||{let _ignored = sync_sender.send(());};
         for ev in receiver.iter() {
-            match ev {
-                Client(ev) => {
-                    use client::ToGUI::*;
-                    match ev {
-                        Connected(is_connected) => {
-                            if is_connected{
-                                println!("Connected to server");
-                            }
-                            else{
-                                println!("Disconnected from server. Some events may have been dropped. Trying to reconnect...");
-                                // TODO try to reconnect (with exponential backoff?)
-                            }
-                        }
-                        ,MissingConnection() => {
-                            println!("Internal error: Know known method of connecting to server.");
-                        }
-                        ,StateUpdate() => {
-                            let data = state.lock().unwrap();
-                            draw(&gfx, &*data);
-                            
-                        }
-                        ,GameEnd() => {println!("TODO game end");}
-                    }
-                }
-                ,UserInput(command) => {
-                    match command.as_ref(){
-                        "show" => {
-                            let data = state.lock().unwrap();
-                            draw(&gfx, &*data);
-                        }
-                        ,"solved" => {
-                            sender.send(SetState(Cube::new()));
-                        }
-                        ,"detect leds" => {
-                            sender.send(DetectLEDs());
-                        }
-                        ,"map undo" => {
-                            sender.send(BacktrackLEDDetect());
-                        }
-                        ,"detect inputs" => {
-                            sender.send(DetectInputs());
-                        }
-                        ,"start" => {
-                            sender.send(StartGame());
-                        }
-                        ,"" => {}
-                        ,cmd => {
-                            let mut parts = cmd.split(' ');
-                            let name = parts.next().unwrap();
-                            let args_str = &cmd[name.len()..cmd.len()];
-                            let args = parts.collect::<Vec<&str>>();
-                            match name.as_ref(){
-                                "twist" => {
-                                    let mut data = state.lock().unwrap();
-                                    match data.cube.twists(args_str){
-                                        Err(msg) => {println!("Error: {}", msg)}
-                                        ,Ok(_) => {
-                                            sender.send(SyncState());
-                                            draw(&gfx, &data);
-                                        }
-                                    }
+            let result: Result<bool, SendError<client::FromGUI>> = (||{
+                match ev {
+                    Client(ev) => {
+                        use client::ToGUI::*;
+                        match ev {
+                            Connected(is_connected) => {
+                                if is_connected{
+                                    println!("Connected to server");
                                 }
-                                ,"map" => {
-                                    if args.len() != 2{
-                                        println!("map requires two parameters");
-                                    }
-                                    else{
-                                        let mut state = state.lock().unwrap();
-                                        if let Ok((f, s)) = (||{
-                                            Result::<(usize, usize), std::num::ParseIntError>::Ok((
-                                                usize::from_str(args[0])?
-                                                ,usize::from_str(args[1])?
-                                            ))
-                                        })() {
-                                            sender.send(MapLED(f, s));
-                                            println!("mapped led {} to (face, subface) = ({}, {})", state.led_detect_state.led_num, f, s);
-                                        }
-                                    }
+                                else{
+                                    println!("Disconnected from server. Some events may have been dropped. Trying to reconnect...");
+                                    // TODO try to reconnect (with exponential backoff?)
                                 }
-                                ,_ => {println!("Unknown command: {}",cmd);}
                             }
+                            ,MissingConnection() => {
+                                println!("Internal error: Know known method of connecting to server.");
+                            }
+                            ,StateUpdate() => {
+                                let data = state.lock().unwrap();
+                                draw(&gfx, &*data);
+                                
+                            }
+                            ,GameEnd() => {println!("TODO game end");}
                         }
                     }
-                    gui_release();
+                    ,UserInput(command) => {
+                        match command.as_ref(){
+                            "show" => {
+                                let data = state.lock().unwrap();
+                                draw(&gfx, &*data);
+                            }
+                            ,"solved" => {
+                                sender.send(SetState(Cube::new()))?;
+                            }
+                            ,"detect leds" => {
+                                sender.send(DetectLEDs())?;
+                            }
+                            ,"map undo" => {
+                                sender.send(BacktrackLEDDetect())?;
+                            }
+                            ,"detect inputs" => {
+                                sender.send(DetectInputs())?;
+                            }
+                            ,"start" => {
+                                sender.send(StartGame())?;
+                            }
+                            ,"exit" => {
+                                sender.send(ShutDown())?;
+                                return Ok(true);
+                            }
+                            ,"" => {}
+                            ,cmd => {
+                                let mut parts = cmd.split(' ');
+                                let name = parts.next().unwrap();
+                                let args_str = &cmd[name.len()..cmd.len()];
+                                let args = parts.collect::<Vec<&str>>();
+                                match name.as_ref(){
+                                    "twist" => {
+                                        let mut data = state.lock().unwrap();
+                                        match data.cube.twists(args_str){
+                                            Err(msg) => {println!("Error: {}", msg)}
+                                            ,Ok(_) => {
+                                                sender.send(SyncState())?;
+                                                draw(&gfx, &data);
+                                            }
+                                        }
+                                    }
+                                    ,"map" => {
+                                        if args.len() != 2{
+                                            println!("map requires two parameters");
+                                        }
+                                        else{
+                                            let state = state.lock().unwrap();
+                                            if let Ok((f, s)) = (||{
+                                                Result::<(usize, usize), std::num::ParseIntError>::Ok((
+                                                    usize::from_str(args[0])?
+                                                    ,usize::from_str(args[1])?
+                                                ))
+                                            })() {
+                                                sender.send(MapLED(f, s))?;
+                                                println!("mapped led {} to (face, subface) = ({}, {})", state.led_detect_state.led_num, f, s);
+                                            }
+                                        }
+                                    }
+                                    ,_ => {println!("Unknown command: {}",cmd);}
+                                }
+                            }
+                        }
+                        gui_release();
+                    }
                 }
+                Ok(false)
+            })();
+            match result{
+                Ok(do_break) => {if do_break {break;}}
+                ,Err(e) => {println!("Internal event loop error: {:?}", e)}
             }
         }
     });
@@ -257,14 +264,18 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
                 for line in line.lines(){
-                    u_sender.send(UserInput(line.to_string()));
+                    match u_sender.send(UserInput(line.to_string())){
+                        Err(e) => {println!("Internal error: {:?}", e);}
+                        ,Ok(_) => {}
+                    }
                     sync_receiver.recv().unwrap();
                 }
             }
             ,Err(ReadlineError::Interrupted) => {
             }
             ,Err(ReadlineError::Eof) => {
-                println!("Exit");
+                println!("exit");
+                let _ignored = u_sender.send(UserInput("exit".to_string()));
                 break
             }
             ,Err(err) => {
@@ -274,5 +285,9 @@ fn main() {
         }
     }
     rl.save_history(".cube_control_history").unwrap();
+
+    let _ignored = event_loop.join();
+    let _ignored = client_event_forwarder.join();
+    let _ignored = client.join();
 
 }
