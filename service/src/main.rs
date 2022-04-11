@@ -2,7 +2,6 @@ use std::net::TcpListener;
 use std::thread;
 use std::sync::mpsc::{channel,Sender,SendError};
 use std::io::{Write,Read,BufReader,BufRead};
-use std::time::Duration;
 use std::str::FromStr;
 use std::fs::File;
 use std::path::Path;
@@ -13,6 +12,9 @@ extern crate pest;
 use serde::{Deserialize, Serialize};
 use cube_model::{Cube, Twist};
 use thiserror::Error;
+use std::time::{Instant, Duration};
+use std::cmp::min;
+use std::fmt::{self,Display};
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -55,6 +57,7 @@ enum ClientEvent{
     ,UpdateLEDMap(String)
     ,UpdateInputMap(String)
     ,Play()
+    ,StartTimedGame()
 }
 
 enum Event{
@@ -68,6 +71,87 @@ enum EvStreamError {
     IO(#[from] std::io::Error)
     ,#[error("Sender Error: {0}")]
     Sender(#[from] std::sync::mpsc::SendError<Event>)
+}
+
+#[derive(Default, Debug)]
+struct GameState{
+    started: Option<Instant>
+    ,inspection_end: Option<Instant>
+    ,ended: Option<Instant>
+}
+
+impl Display for GameState{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self.started{
+            Some(s) => "t0"
+            ,None => "?"
+        };
+        let i = match (self.started, self.inspection_end) {
+            (Some(start), Some(end)) => {format!("{:#?}", end-start)}
+            ,_=>{"?".to_string()}
+        };
+        let e = match (self.started, self.ended) {
+            (Some(start), Some(end)) => {format!("{:#?}", end-start)}
+            ,_=>{"?".to_string()}
+        };
+        write!(f, "(s:{}, i:{}, e:{})", s,i,e)
+    }
+}
+
+impl GameState{
+    fn is_inspecting(&self) -> bool {
+        self.started.is_some() && self.inspection_end.is_none()
+    }
+
+    fn is_started(&self) -> bool {
+        self.started.is_some()
+    }
+
+    fn is_ended(&self) -> bool {
+        self.ended.is_some()
+    }
+
+    fn can_start(&self) -> bool {
+        self.is_ended() || !self.is_started()
+    }
+
+    fn recorded_time(&self) -> Option<Duration>{
+        match (self.started, self.inspection_end, self.ended) {
+            (Some(start), Some(inspect_end), Some(end)) => {
+                const FIFTEEN: Duration = Duration::from_secs(15);
+                Some((end - start )- min(inspect_end - start, FIFTEEN))
+            }
+            ,_=>{
+                None
+            }
+        }
+    }
+
+    fn twist(&mut self) -> bool {
+        if self.is_inspecting(){
+            self.inspection_end = Some(Instant::now());
+            true
+        }
+        else {
+            false
+        }
+    }
+
+    fn start(&mut self) -> bool {
+        if self.can_start() {
+            self.started = Some(Instant::now());
+            self.inspection_end = None;
+            self.ended = None;
+            true
+        }
+        else {
+            false
+        }
+    }
+
+    fn solved(&mut self) {
+        self.ended = Some(Instant::now());
+    }
 }
 
 fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>){
@@ -141,6 +225,9 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                             }
                                             ,"play" => {
                                                 sender.send(Event::Client(ClientEvent::Play()))?;
+                                            }
+                                            ,"timed_start" => {
+                                                sender.send(Event::Client(ClientEvent::StartTimedGame()))?;
                                             }
                                             ,_=>{
                                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
@@ -400,6 +487,8 @@ fn main() {
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
 
+    let mut game_state = GameState::default();
+
     for event in receiver.iter(){
         match event {
             Event::Client(c_ev) => {
@@ -452,6 +541,10 @@ fn main() {
                             device_write.write(b"p")?;
                             device_write.flush()?;
                         }
+                        ,ClientEvent::StartTimedGame() => {
+                            game_state.start();
+                            println!("state: {}", game_state);
+                        }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
                             // TODO sync state on connect: sender.send(StreamEvent::GUI(GUIEvent::SyncState(somethingsomething)));
@@ -466,6 +559,19 @@ fn main() {
             }
             Event::Device(d_ev) => {
                 if let Some(sender) = gui_sender.as_ref(){
+                    match d_ev {
+                        DeviceEvent::Twist(_) => {
+                            if game_state.twist(){
+                                // TODO update client
+                                println!("state: {}", game_state);
+                            }
+                        }
+                        ,DeviceEvent::Solved() => {
+                            game_state.solved();
+                            println!("state: {}", game_state);
+                        }
+                        ,_=>{}
+                    }
                     match sender.send(StreamEvent::GUI(d_ev)) {
                         Err(e) => {println!("Failed to send device event to client, client disconnected?: {:?}", e)}
                         ,Ok(_) => {}

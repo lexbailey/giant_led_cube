@@ -14,7 +14,7 @@ mod gl_abstractions;
 use gl_abstractions as gla;
 use gla::{UniformMat4, UniformVec3};
 
-mod client;
+pub mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
 
 use cube_model as cube;

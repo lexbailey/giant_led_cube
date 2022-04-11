@@ -609,6 +609,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 }
                                 command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
                                 command_queue.push_back(("play".to_string(), vec![]));
+                                command_queue.push_back(("timed_start".to_string(), vec![]));
                                 to_gui_sender.send(ToGUI::StateUpdate())?;
                             }
                             ,SetState(cube) => {
