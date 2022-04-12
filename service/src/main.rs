@@ -47,6 +47,7 @@ enum StreamEvent{
     GUI(DeviceEvent)
     ,RecvLine(Vec<u8>)
     ,EOS()
+    ,SyncTimers((String, String, String))
 }
 
 enum ClientEvent{
@@ -119,7 +120,7 @@ impl GameState{
         match (self.started, self.inspection_end, self.ended) {
             (Some(start), Some(inspect_end), Some(end)) => {
                 const FIFTEEN: Duration = Duration::from_secs(15);
-                Some((end - start )- min(inspect_end - start, FIFTEEN))
+                Some((end - start)- min(inspect_end - start, FIFTEEN))
             }
             ,_=>{
                 None
@@ -151,6 +152,27 @@ impl GameState{
 
     fn solved(&mut self) {
         self.ended = Some(Instant::now());
+    }
+
+    fn serialise(&self) -> (String, String, String){
+        match self.started{
+            None => {("X".to_string(), "X".to_string(), "X".to_string())}
+            Some(start) => {
+                match self.inspection_end {
+                    None => {("0".to_string(), "X".to_string(), "X".to_string())}
+                    Some(inspect) => {
+                        let d_in = format!("{}", (inspect - start).as_millis());
+                        match self.ended{
+                            None => { ("0".to_string(),d_in,"X".to_string()) }
+                            Some(end) => {
+                                let d_tot = format!("{}", (end - start).as_millis());
+                                ("0".to_string(), d_in, d_tot)
+                             }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -259,6 +281,11 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                         write_stream.write(msg.as_bytes())?;
                                     }
                                 }
+                                Ok(Loop)
+                            }
+                            ,SyncTimers((a,b,c)) => {
+                                let msg = auth.construct_reply("timer_state", &vec![&a,&b,&c]);
+                                write_stream.write(msg.as_bytes())?;
                                 Ok(Loop)
                             }
                         }
@@ -543,7 +570,9 @@ fn main() {
                         }
                         ,ClientEvent::StartTimedGame() => {
                             game_state.start();
-                            println!("state: {}", game_state);
+                            if let Some(sender) = gui_sender.as_ref(){
+                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                            }
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
@@ -562,13 +591,12 @@ fn main() {
                     match d_ev {
                         DeviceEvent::Twist(_) => {
                             if game_state.twist(){
-                                // TODO update client
-                                println!("state: {}", game_state);
+                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
                         }
                         ,DeviceEvent::Solved() => {
                             game_state.solved();
-                            println!("state: {}", game_state);
+                            sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                         }
                         ,_=>{}
                     }

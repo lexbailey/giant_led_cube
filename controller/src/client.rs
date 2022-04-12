@@ -506,6 +506,12 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                             to_gui_sender.send(ToGUI::StateUpdate())?;
                                             to_gui_sender.send(ToGUI::GameEnd())?;
                                         }
+                                        ,"timer_state" => {
+                                            let mut state = state.lock().unwrap();
+                                            if args.len() >= 3{
+                                                println!("{:?}", args);
+                                            }
+                                        }
                                         ,r=>{
                                             eprintln!("TODO handle response: {}", r);
                                         }   
