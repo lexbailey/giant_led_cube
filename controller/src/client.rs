@@ -197,6 +197,8 @@ pub struct ClientState {
     pub cube: Cube
     ,pub input_detect_state: InputDetectState
     ,pub led_detect_state: LEDDetectState
+    ,pub last_timer_update: Instant
+    ,pub timer_state: (Option<Duration>, Option<Duration>, Option<Duration>)
 }
 
 impl ClientState {
@@ -205,6 +207,8 @@ impl ClientState {
             cube: Cube::new()
             ,input_detect_state: InputDetectState::new()
             ,led_detect_state: LEDDetectState::new()
+            ,last_timer_update: Instant::now()
+            ,timer_state: (None, None, None)
         }
     }
 }
@@ -507,10 +511,21 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                             to_gui_sender.send(ToGUI::GameEnd())?;
                                         }
                                         ,"timer_state" => {
-                                            let mut state = state.lock().unwrap();
+                                            let now = Instant::now();
                                             if args.len() >= 3{
-                                                println!("{:?}", args);
+                                                let mut state = state.lock().unwrap();
+                                                state.last_timer_update = now;
+                                                let dur = |d|{u64::from_str(d).and_then(|d|Ok(Duration::from_millis(d))).ok()};
+                                                state.timer_state = (
+                                                   dur(&args[0])
+                                                   ,dur(&args[1])
+                                                   ,dur(&args[2])
+                                                );
+                                                println!("{:?}, {:?}", state.last_timer_update, state.timer_state);
                                             }
+                                        }
+                                        ,"solve_time" => {
+                                            println!("{:?}", args[0]);
                                         }
                                         ,r=>{
                                             eprintln!("TODO handle response: {}", r);
@@ -603,7 +618,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut twist = Twist::from_string("F").unwrap();
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
-                                for _ in 0..30{
+                                for _ in 0..1{
                                     while twist == last_twist{
                                         twist = Twist{
                                             face: rng.gen_range(0..6)

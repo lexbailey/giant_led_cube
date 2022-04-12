@@ -48,6 +48,7 @@ enum StreamEvent{
     ,RecvLine(Vec<u8>)
     ,EOS()
     ,SyncTimers((String, String, String))
+    ,ReportTime(Duration)
 }
 
 enum ClientEvent{
@@ -100,6 +101,12 @@ impl Display for GameState{
 }
 
 impl GameState{
+    fn reset(&mut self) {
+        self.started = None;
+        self.inspection_end = None;
+        self.ended = None;
+    }
+
     fn is_inspecting(&self) -> bool {
         self.started.is_some() && self.inspection_end.is_none()
     }
@@ -285,6 +292,11 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                             }
                             ,SyncTimers((a,b,c)) => {
                                 let msg = auth.construct_reply("timer_state", &vec![&a,&b,&c]);
+                                write_stream.write(msg.as_bytes())?;
+                                Ok(Loop)
+                            }
+                            ,ReportTime(dur) => {
+                                let msg = auth.construct_reply("solve_time", &vec![&format!("{}", dur.as_millis())]);
                                 write_stream.write(msg.as_bytes())?;
                                 Ok(Loop)
                             }
@@ -569,6 +581,7 @@ fn main() {
                             device_write.flush()?;
                         }
                         ,ClientEvent::StartTimedGame() => {
+                            game_state.reset();
                             game_state.start();
                             if let Some(sender) = gui_sender.as_ref(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
@@ -597,6 +610,10 @@ fn main() {
                         ,DeviceEvent::Solved() => {
                             game_state.solved();
                             sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                            match game_state.recorded_time(){
+                                Some(time) => {sender.send(StreamEvent::ReportTime(time));}
+                                ,_=>{}
+                            }
                         }
                         ,_=>{}
                     }
