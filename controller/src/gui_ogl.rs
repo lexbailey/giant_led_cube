@@ -12,7 +12,7 @@ use std::cell::RefCell;
 
 mod gl_abstractions;
 use gl_abstractions as gla;
-use gla::{UniformMat4, UniformVec3};
+use gla::{UniformMat4, UniformVec3, UniformSampler2D};
 
 pub mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
@@ -22,11 +22,12 @@ use cube::Cube;
 
 use std::sync::{Arc,Mutex};
 
+use fontdue::Font;
 
 shader_struct!{
     CubeShader
     ,r#"
-        #version 330 core
+        #version 410 core
         layout (location = 0) in vec4 aPos;
         uniform mat4 u_face_transform;
         uniform mat4 u_offset;
@@ -54,6 +55,49 @@ shader_struct!{
     }
 }
 
+shader_struct!{
+    ImageShader 
+    ,r#"
+        #version 410 core
+        layout (location = 0) in vec2 screenpos;
+        layout (location = 1) in vec2 texcoord_in;
+
+        uniform mat4 u_image_geom;
+
+        out vec2 texcoord;
+
+        void main()
+        {
+            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom;
+            texcoord = texcoord_in;
+        }
+        "#
+    ,r#"
+        #version 410 core
+        out vec4 FragColor;
+        
+        in vec2 texcoord;
+    
+        uniform vec3 u_color;
+        uniform sampler2D u_texture;
+
+        void main()
+        {
+           if (texture(u_texture, texcoord).r > 0.0){// * vec4(u_color, 0);
+                //FragColor = texture(u_texture, texcoord);// * vec4(u_color, 0);
+           FragColor = vec4(u_color, 0);
+            }
+           else{FragColor = vec4(0,0,0, 0);}
+           //FragColor = vec4(u_color, 0);
+        }
+        "#
+    ,{
+        u_color: UniformVec3,
+        u_texture: UniformSampler2D,
+        u_image_geom: UniformMat4,
+    }
+}
+
 struct DataModel{
     // TODO move d, r, diff, and frames into the renderdata for the opengl version
     d: f32
@@ -68,13 +112,17 @@ use glutin::PossiblyCurrent;
 
 struct RenderData{
     shader: CubeShader
+    ,image_shader: ImageShader
     ,cube_verts: u32
+    ,image_verts: u32
     ,offset: affine::Transform<f32>
     ,offset_subface: affine::Transform<f32>
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
     ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
     ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<()>>>
+    ,font: Font
+    ,texture: u32
 }
 
 
@@ -90,7 +138,13 @@ fn init_render_data() -> RenderData{
         win
     };
 
+    let font = include_bytes!("../resources/Roboto-Regular.ttf") as &[u8];
+    let font = Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
+    // Rasterize and get the layout metrics for the letter 'g' at 17px.
+    let (metrics, bitmap) = font.rasterize('g', 17.0);
+
     let cube_shader = CubeShader::new();
+    let image_shader = ImageShader::new();
 
     let gfx_objs = unsafe{ 
 
@@ -101,6 +155,13 @@ fn init_render_data() -> RenderData{
             ,-0.5, 0.5, 0.0, 1.0
             ,0.5, 0.5, 0.0, 1.0
             ,0.5, -0.5, 0.0, 1.0
+        ];
+
+        let image_vert_array: [f32;16] = [
+            0.0, 0.0, 0.0, 0.0
+            ,1.0, 0.0, 1.0, 0.0
+            ,1.0, 1.0, 1.0, 1.0
+            ,0.0, 1.0, 0.0, 1.0
         ];
 
         // Build the cube by transforming the square into five different orientations (bottom is missing)
@@ -130,8 +191,13 @@ fn init_render_data() -> RenderData{
         let mut vbo = 0;
         let mut cube_verts = 0;
 
+        let mut image_vbo = 0;
+        let mut image_verts = 0;
+
         gl::GenVertexArrays(1, &mut cube_verts);
         gl::GenBuffers(1, &mut vbo);
+        gl::GenVertexArrays(1, &mut image_verts);
+        gl::GenBuffers(1, &mut image_vbo);
 
         gl::BindVertexArray(cube_verts);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
@@ -152,21 +218,49 @@ fn init_render_data() -> RenderData{
             ptr::null(),
         );
 
+
+        gl::BindVertexArray(image_verts);
+        gl::BindBuffer(gl::ARRAY_BUFFER, image_vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (image_vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
+            &image_vert_array[0] as *const f32 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+
+        // position attribute
+        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 4) as GLsizei, ptr::null());
+        gl::EnableVertexAttribArray(0);
+        // texture coord attribute
+        gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 4) as GLsizei, ptr::null::<c_void>().add(2*mem::size_of::<GLfloat>()));
+        gl::EnableVertexAttribArray(1);
+
         gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         gl::BindVertexArray(0);
+
+        let mut texture = 0;
+        gl::GenTextures(1, &mut texture);
+        let mut bogustexture = 0;
+        gl::GenTextures(1, &mut bogustexture);
+        gl::GenTextures(1, &mut bogustexture);
+        gl::GenTextures(1, &mut bogustexture);
+        gl::GenTextures(1, &mut bogustexture);
     
-        gl::Enable(gl::DEPTH_TEST);
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
 
         RenderData{
             shader: cube_shader
+            ,image_shader: image_shader
             ,cube_verts: cube_verts
+            ,image_verts: image_verts
             ,offset: offset
             ,offset_subface: offset_subface
             ,faces: face_transforms
             ,subfaces: subface_transforms
             ,window: gl_window
             ,events_loop: RefCell::new(Some(events_loop))
+            ,font: font
+            ,texture: texture
         }
     };
     gfx_objs
@@ -193,6 +287,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
     fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>){
         let state = state.lock().unwrap();
         unsafe {
+            gl::Enable(gl::DEPTH_TEST);
             gl::ClearColor(data.d, 0.58, 0.92, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gfx.shader.use_();
@@ -230,9 +325,34 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
                 gfx.shader.u_face_transform.set(&gfx.faces[i].data);
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
+
+            gl::Disable(gl::DEPTH_TEST);
+            let (metrics, bitmap) = gfx.font.rasterize('g', 17.0);
+            //println!("{}x{}", metrics.width, metrics.height);
+            //for y in 0..metrics.height{
+            //    for x in 0..metrics.width{
+            //        let a = bitmap[(y * metrics.width)+x];
+            //        print!("{}", if a>0 {format!("{:x}", a>>4)} else {" ".to_string()});
+            //    }
+            //    println!("");
+            //}
+            gfx.image_shader.use_();
+
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, gfx.texture);
+            //gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, metrics.width as i32, metrics.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, (bitmap.as_ref() as &[u8]) as *const [u8] as *const c_void);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, metrics.width as i32, (metrics.height/3) as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, (bitmap.as_ref() as &[u8]) as *const [u8] as *const c_void);
+
+            gl::BindVertexArray(gfx.image_verts);
+            //let image_geom = affine::Transform::<GLfloat>::scale(metrics.width as f32, metrics.height as f32, 0.0);
+            let image_geom = affine::Transform::<GLfloat>::scale(0.9, 0.9, 0.0);
+            gfx.image_shader.u_image_geom.set(&image_geom.data);
+            gfx.image_shader.u_texture.set(4);
+            gfx.image_shader.u_color.set(1.0,0.5,0.5);
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+            
         }
         gfx.window.swap_buffers().unwrap();
-
     }
 
     let target_fps = 30.0;
