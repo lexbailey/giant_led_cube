@@ -27,7 +27,7 @@ use fontdue::Font;
 shader_struct!{
     CubeShader
     ,r#"
-        #version 410 core
+        #version 330 core
         layout (location = 0) in vec4 aPos;
         uniform mat4 u_face_transform;
         uniform mat4 u_offset;
@@ -58,22 +58,23 @@ shader_struct!{
 shader_struct!{
     ImageShader 
     ,r#"
-        #version 410 core
+        #version 330 core
         layout (location = 0) in vec2 screenpos;
         layout (location = 1) in vec2 texcoord_in;
 
         uniform mat4 u_image_geom;
+        uniform mat4 u_translate;
 
         out vec2 texcoord;
 
         void main()
         {
-            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom;
+            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate;
             texcoord = texcoord_in;
         }
         "#
     ,r#"
-        #version 410 core
+        #version 330 core
         out vec4 FragColor;
         
         in vec2 texcoord;
@@ -83,18 +84,14 @@ shader_struct!{
 
         void main()
         {
-           if (texture(u_texture, texcoord).r > 0.0){// * vec4(u_color, 0);
-                //FragColor = texture(u_texture, texcoord);// * vec4(u_color, 0);
-           FragColor = vec4(u_color, 0);
-            }
-           else{FragColor = vec4(0,0,0, 0);}
-           //FragColor = vec4(u_color, 0);
+           FragColor = texture(u_texture, texcoord).r * vec4(u_color, 1.0);
         }
         "#
     ,{
         u_color: UniformVec3,
         u_texture: UniformSampler2D,
         u_image_geom: UniformMat4,
+        u_translate: UniformMat4,
     }
 }
 
@@ -125,6 +122,11 @@ struct RenderData{
     ,texture: u32
 }
 
+fn glerror(){
+    unsafe{
+    println!("glerror:{}", gl::GetError());
+    }
+}
 
 fn init_render_data() -> RenderData{
     let events_loop = glutin::event_loop::EventLoop::new();
@@ -140,8 +142,6 @@ fn init_render_data() -> RenderData{
 
     let font = include_bytes!("../resources/Roboto-Regular.ttf") as &[u8];
     let font = Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-    // Rasterize and get the layout metrics for the letter 'g' at 17px.
-    let (metrics, bitmap) = font.rasterize('g', 17.0);
 
     let cube_shader = CubeShader::new();
     let image_shader = ImageShader::new();
@@ -158,10 +158,10 @@ fn init_render_data() -> RenderData{
         ];
 
         let image_vert_array: [f32;16] = [
-            0.0, 0.0, 0.0, 0.0
-            ,1.0, 0.0, 1.0, 0.0
-            ,1.0, 1.0, 1.0, 1.0
-            ,0.0, 1.0, 0.0, 1.0
+            0.0, 0.0, 0.0, 1.0
+            ,1.0, 0.0, 1.0, 1.0
+            ,1.0, 1.0, 1.0, 0.0
+            ,0.0, 1.0, 0.0, 0.0
         ];
 
         // Build the cube by transforming the square into five different orientations (bottom is missing)
@@ -240,11 +240,6 @@ fn init_render_data() -> RenderData{
 
         let mut texture = 0;
         gl::GenTextures(1, &mut texture);
-        let mut bogustexture = 0;
-        gl::GenTextures(1, &mut bogustexture);
-        gl::GenTextures(1, &mut bogustexture);
-        gl::GenTextures(1, &mut bogustexture);
-        gl::GenTextures(1, &mut bogustexture);
     
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
 
@@ -327,32 +322,41 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             }
 
             gl::Disable(gl::DEPTH_TEST);
-            let (metrics, bitmap) = gfx.font.rasterize('g', 17.0);
-            //println!("{}x{}", metrics.width, metrics.height);
-            //for y in 0..metrics.height{
-            //    for x in 0..metrics.width{
-            //        let a = bitmap[(y * metrics.width)+x];
-            //        print!("{}", if a>0 {format!("{:x}", a>>4)} else {" ".to_string()});
-            //    }
-            //    println!("");
-            //}
             gfx.image_shader.use_();
 
-            gl::ActiveTexture(gl::TEXTURE0);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+
             gl::BindTexture(gl::TEXTURE_2D, gfx.texture);
-            //gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, metrics.width as i32, metrics.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, (bitmap.as_ref() as &[u8]) as *const [u8] as *const c_void);
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, metrics.width as i32, (metrics.height/3) as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, (bitmap.as_ref() as &[u8]) as *const [u8] as *const c_void);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_LOD, 0 as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LOD, 0 as i32);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gfx.image_shader.u_texture.set(0);
+            gfx.image_shader.u_color.set(0.5,1.0,0.5);
+
+            type T = affine::Transform<GLfloat>;
 
             gl::BindVertexArray(gfx.image_verts);
-            //let image_geom = affine::Transform::<GLfloat>::scale(metrics.width as f32, metrics.height as f32, 0.0);
-            let image_geom = affine::Transform::<GLfloat>::scale(0.9, 0.9, 0.0);
-            gfx.image_shader.u_image_geom.set(&image_geom.data);
-            gfx.image_shader.u_texture.set(4);
-            gfx.image_shader.u_color.set(1.0,0.5,0.5);
-            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+
+            use fontdue::layout;
+            let mut l: layout::Layout<()> = layout::Layout::new(layout::CoordinateSystem::PositiveYUp);
+            l.append(&[&gfx.font], &layout::TextStyle::new("Hello world", 50.0, 0));
+            for c in l.glyphs(){
+                let (metrics, bitmap) = gfx.font.rasterize_config(c.key);
+                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, c.width as i32, c.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, bitmap.as_ptr() as *const c_void);
+                let image_geom = T::scale(0.01*(c.width as f32), 0.01*(c.height as f32), 0.0);
+                let image_translate = T::translate(-1.0 + (c.x*0.01),0.0+(c.y*0.01),0.0) ;
+                gfx.image_shader.u_image_geom.set(&image_geom.data);
+                gfx.image_shader.u_translate.set(&image_translate.data);
+                gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+            }
             
         }
         gfx.window.swap_buffers().unwrap();
+        //std::process::exit(1);
     }
 
     let target_fps = 30.0;
