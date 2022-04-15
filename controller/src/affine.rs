@@ -1,6 +1,7 @@
 use std::ops;
 use std::fmt;
 
+#[derive(Debug)]
 pub struct Transform<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> {
     pub data: [T;16]
 }

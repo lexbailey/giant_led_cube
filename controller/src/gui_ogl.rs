@@ -29,12 +29,13 @@ shader_struct!{
     ,r#"
         #version 330 core
         layout (location = 0) in vec4 aPos;
+        uniform mat4 u_global_transform;
         uniform mat4 u_face_transform;
         uniform mat4 u_offset;
         uniform mat4 u_transform;
         void main()
         {
-            gl_Position = aPos  * u_offset * u_face_transform * u_transform;
+            gl_Position = aPos  * u_offset * u_face_transform * u_transform * u_global_transform;
         }
         "#
     ,r#"
@@ -52,6 +53,7 @@ shader_struct!{
         u_offset: UniformMat4,
         u_transform: UniformMat4,
         u_color: UniformVec3,
+        u_global_transform: UniformMat4,
     }
 }
 
@@ -62,6 +64,7 @@ shader_struct!{
         layout (location = 0) in vec2 screenpos;
         layout (location = 1) in vec2 texcoord_in;
 
+        uniform mat4 u_global_transform;
         uniform mat4 u_image_geom;
         uniform mat4 u_translate;
 
@@ -69,7 +72,7 @@ shader_struct!{
 
         void main()
         {
-            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate;
+            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate * u_global_transform;
             texcoord = texcoord_in;
         }
         "#
@@ -92,6 +95,7 @@ shader_struct!{
         u_texture: UniformSampler2D,
         u_image_geom: UniformMat4,
         u_translate: UniformMat4,
+        u_global_transform: UniformMat4,
     }
 }
 
@@ -120,12 +124,6 @@ struct RenderData{
     ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<()>>>
     ,font: Font
     ,texture: u32
-}
-
-fn glerror(){
-    unsafe{
-    println!("glerror:{}", gl::GetError());
-    }
 }
 
 fn init_render_data() -> RenderData{
@@ -279,15 +277,35 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
         if data.d <= 0.0 {data.diff = 0.01;}
     }
 
+    type T = affine::Transform<GLfloat>;
+
     fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>){
         let state = state.lock().unwrap();
+        let sz = gfx.window.window().inner_size();
+        let ww = sz.width as f32;
+        let wh = sz.height as f32;
+        const RATIO: f32 = 16.0/9.0;
+        //const RATIO: f32 = 1.0;
+
+        // TODO fix the discontinuities here
+        let global_transform = if ww < (wh * RATIO){
+            let scale = ww / (wh * RATIO);
+            T::scale(1.0, RATIO*scale,1.0)
+        }
+        else{
+            let scale = wh / (ww / RATIO);
+            T::scale(scale/RATIO,1.0,1.0)
+        };
+        println!("{:?}", global_transform);
+        
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::ClearColor(data.d, 0.58, 0.92, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gfx.shader.use_();
+            gfx.shader.u_global_transform.set(&global_transform.data);
             gl::BindVertexArray(gfx.cube_verts);
-            let transform = affine::Transform::<GLfloat>::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
+            let transform = T::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
             gfx.shader.u_transform.set(&transform.data);
 
             for i in 0..5{
@@ -336,10 +354,11 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             gl::ActiveTexture(gl::TEXTURE0);
             gfx.image_shader.u_texture.set(0);
             gfx.image_shader.u_color.set(0.5,1.0,0.5);
+            gfx.image_shader.u_global_transform.set(&global_transform.data);
 
-            type T = affine::Transform<GLfloat>;
 
             gl::BindVertexArray(gfx.image_verts);
+
 
             use fontdue::layout;
             let mut l: layout::Layout<()> = layout::Layout::new(layout::CoordinateSystem::PositiveYUp);
