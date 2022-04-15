@@ -12,7 +12,7 @@ use std::cell::RefCell;
 
 mod gl_abstractions;
 use gl_abstractions as gla;
-use gla::{UniformMat4, UniformVec3, UniformSampler2D};
+use gla::{UniformMat4, UniformVec3, UniformVec4, UniformSampler2D};
 
 pub mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
@@ -65,14 +65,16 @@ shader_struct!{
         layout (location = 1) in vec2 texcoord_in;
 
         uniform mat4 u_global_transform;
+        uniform mat4 u_pix_transform;
         uniform mat4 u_image_geom;
         uniform mat4 u_translate;
+        uniform mat4 u_scale;
 
         out vec2 texcoord;
 
         void main()
         {
-            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate * u_global_transform;
+            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate * u_global_transform * u_pix_transform;
             texcoord = texcoord_in;
         }
         "#
@@ -82,20 +84,26 @@ shader_struct!{
         
         in vec2 texcoord;
     
-        uniform vec3 u_color;
+        uniform vec4 u_color;
         uniform sampler2D u_texture;
 
         void main()
         {
-           FragColor = texture(u_texture, texcoord).r * vec4(u_color, 1.0);
+           FragColor =
+             min(1.0, (u_color.a * texture(u_texture, texcoord).r) + (1.0-u_color.a))
+             *
+             vec4(u_color.rgb, 1.0)
+           ;
         }
         "#
     ,{
-        u_color: UniformVec3,
+        u_color: UniformVec4,
         u_texture: UniformSampler2D,
         u_image_geom: UniformMat4,
         u_translate: UniformMat4,
         u_global_transform: UniformMat4,
+        u_pix_transform: UniformMat4,
+        u_scale: UniformMat4,
     }
 }
 
@@ -124,13 +132,14 @@ struct RenderData{
     ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<()>>>
     ,font: Font
     ,texture: u32
+    ,font_scale: f32
 }
 
 fn init_render_data() -> RenderData{
     let events_loop = glutin::event_loop::EventLoop::new();
     let window = glutin::window::WindowBuilder::new()
-        .with_title("Big cube")
-        .with_inner_size(glutin::dpi::PhysicalSize::new(800,800));
+        .with_title("Giant cube")
+        .with_inner_size(glutin::dpi::PhysicalSize::new(1120,630));
     let context = glutin::ContextBuilder::new().with_vsync(true);
     let gl_window = unsafe {
         let win = context.build_windowed(window, &events_loop).unwrap().make_current().unwrap();
@@ -138,7 +147,7 @@ fn init_render_data() -> RenderData{
         win
     };
 
-    let font = include_bytes!("../resources/Roboto-Regular.ttf") as &[u8];
+    let font = include_bytes!("../resources/MPLUSRounded1c-Regular.ttf") as &[u8];
     let font = Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
 
     let cube_shader = CubeShader::new();
@@ -254,9 +263,89 @@ fn init_render_data() -> RenderData{
             ,events_loop: RefCell::new(Some(events_loop))
             ,font: font
             ,texture: texture
+            ,font_scale: 1.0 // make this a config option??
         }
     };
     gfx_objs
+}
+
+type Tf = affine::Transform<GLfloat>;
+
+fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, s: &str, x: f32, y: f32, pt: f32, color: (f32,f32,f32)){
+    unsafe{
+        gl::Disable(gl::DEPTH_TEST); //text always on top
+        gfx.image_shader.use_();
+
+        // Blend textured glyphs (transparency)
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+
+        // Set up texture
+        gl::BindTexture(gl::TEXTURE_2D, gfx.texture);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_LOD, 0 as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LOD, 0 as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        gl::ActiveTexture(gl::TEXTURE0);
+        // Set up image shader data
+        gfx.image_shader.u_texture.set(0);
+        gfx.image_shader.u_color.set(color.0, color.1, color.2, 1.0);
+        gfx.image_shader.u_global_transform.set(&global_transform.data);
+        gfx.image_shader.u_pix_transform.set(&win_pix_transform.data);
+        //let scale = Tf::scale(gfx.font_scale, gfx.font_scale, gfx.font_scale);
+        gfx.image_shader.u_scale.set(&win_pix_transform.data);
+
+        gl::BindVertexArray(gfx.image_verts);
+
+        use fontdue::layout;
+        let mut l: layout::Layout<()> = layout::Layout::new(layout::CoordinateSystem::PositiveYUp);
+        l.append(&[&gfx.font], &layout::TextStyle::new(s, pt, 0));
+        for c in l.glyphs(){
+            let (metrics, bitmap) = gfx.font.rasterize_config(c.key);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, c.width as i32, c.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, bitmap.as_ptr() as *const c_void);
+            let image_geom = Tf::scale(c.width as f32, c.height as f32, 0.0);
+            let image_translate = Tf::translate(c.x + x, c.y + y,0.0) ;
+            gfx.image_shader.u_image_geom.set(&image_geom.data);
+            gfx.image_shader.u_translate.set(&image_translate.data);
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+        }
+    }
+}
+
+fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, s: &str, x: f32, y: f32, width: f32, height: f32, pt: f32, text_color: (f32,f32,f32)){
+    unsafe{
+        gl::Disable(gl::DEPTH_TEST); //text always on top
+        gfx.image_shader.use_();
+        gl::Disable(gl::BLEND);
+
+        // Set up texture
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        gl::ActiveTexture(gl::TEXTURE0);
+        // Set up image shader data
+        gfx.image_shader.u_texture.set(0);
+        gfx.image_shader.u_global_transform.set(&global_transform.data);
+        gfx.image_shader.u_pix_transform.set(&win_pix_transform.data);
+        gfx.image_shader.u_scale.set(&win_pix_transform.data);
+
+        gl::BindVertexArray(gfx.image_verts);
+
+        let image_geom = Tf::scale(width, height, 1.0);
+        let image_translate = Tf::translate(x, y-height,0.0) ;
+        gfx.image_shader.u_image_geom.set(&image_geom.data);
+        gfx.image_shader.u_translate.set(&image_translate.data);
+        gfx.image_shader.u_color.set(0.3,0.3,0.3, 0.0);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+        let image_geom = Tf::scale(width-20.0, height-20.0, 1.0);
+        let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
+        gfx.image_shader.u_image_geom.set(&image_geom.data);
+        gfx.image_shader.u_translate.set(&image_translate.data);
+        gfx.image_shader.u_color.set(0.2,1.0,0.5, 0.0);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+    }
+    render_text(gfx, global_transform, win_pix_transform, s, x+20.0, y-05.0, pt, text_color);
 }
 
 fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
@@ -277,7 +366,6 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
         if data.d <= 0.0 {data.diff = 0.01;}
     }
 
-    type T = affine::Transform<GLfloat>;
 
     fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>){
         let state = state.lock().unwrap();
@@ -287,12 +375,22 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
         const RATIO: f32 = 16.0/9.0; // Y ranges from -1.0 to +1.0, X ranges from -RATIO to +RATIO
 
         let global_transform = if ww < (wh * RATIO){
-            let scale = ww / (wh * RATIO);
-            T::scale(1.0/RATIO, scale,1.0)
+            Tf::scale(1.0/RATIO, ww / (wh * RATIO),1.0)
         }
         else{
-            let scale = wh / (ww / RATIO);
-            T::scale(scale/RATIO,1.0,1.0)
+            Tf::scale((wh / (ww / RATIO))/RATIO,1.0,1.0)
+        };
+
+        // Calculate the transform to 1:1 window pixel scale, applied after global transform, pretend the screen is 1920x1080
+        let win_pix_transform = if ww < (wh * RATIO) {
+             //let s = (1.0*RATIO)/ww; // absolute pixel size (items on screen maintain absoluse size as window scales)
+             let s = (1.0*RATIO)/(1920.0/2.0); // fixed "fake" screen size, scaled to fit. (whole window image is scaled)
+             Tf::scale(s, s, 1.0)
+        }
+        else{
+             //let s = 1.0/wh;
+             let s = 2.0/1080.0;
+             Tf::scale(s, s, 1.0)
         };
         
         unsafe {
@@ -302,7 +400,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             gfx.shader.use_();
             gfx.shader.u_global_transform.set(&global_transform.data);
             gl::BindVertexArray(gfx.cube_verts);
-            let transform = T::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
+            let transform = Tf::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
             gfx.shader.u_transform.set(&transform.data);
 
             for i in 0..5{
@@ -336,43 +434,18 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
 
-            gl::Disable(gl::DEPTH_TEST);
-            gfx.image_shader.use_();
-
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
-
-            gl::BindTexture(gl::TEXTURE_2D, gfx.texture);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_LOD, 0 as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LOD, 0 as i32);
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::ActiveTexture(gl::TEXTURE0);
-            gfx.image_shader.u_texture.set(0);
-            gfx.image_shader.u_color.set(0.5,1.0,0.5);
-            gfx.image_shader.u_global_transform.set(&global_transform.data);
-
-
-            gl::BindVertexArray(gfx.image_verts);
-
-
-            use fontdue::layout;
-            let mut l: layout::Layout<()> = layout::Layout::new(layout::CoordinateSystem::PositiveYUp);
-            l.append(&[&gfx.font], &layout::TextStyle::new("Hello world", 50.0, 0));
-            for c in l.glyphs(){
-                let (metrics, bitmap) = gfx.font.rasterize_config(c.key);
-                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, c.width as i32, c.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, bitmap.as_ptr() as *const c_void);
-                let image_geom = T::scale(0.01*(c.width as f32), 0.01*(c.height as f32), 0.0);
-                let image_translate = T::translate(-1.0 + (c.x*0.01),0.0+(c.y*0.01),0.0) ;
-                gfx.image_shader.u_image_geom.set(&image_geom.data);
-                gfx.image_shader.u_translate.set(&image_translate.data);
-                gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-            }
+            let black_text = |s, x, y, pt|{
+                render_text(&gfx, &global_transform, &win_pix_transform, s, x, y, pt, (0.0,0.0,0.0));
+            };
+            let button = |s, x, y, w, h|{
+                render_button(&gfx, &global_transform, &win_pix_transform, s, x, y, w, h, 80.0, (0.0,0.0,0.0));
+            };
+            black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
+            black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
+            button("Scramble", -1920.0/2.0, 0.0, 400.0,110.0);
             
         }
         gfx.window.swap_buffers().unwrap();
-        //std::process::exit(1);
     }
 
     let target_fps = 30.0;

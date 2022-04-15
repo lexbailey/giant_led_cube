@@ -11,6 +11,11 @@ pub struct UniformVec3{
 }
 
 #[derive(Default)]
+pub struct UniformVec4{
+    id: i32
+}
+
+#[derive(Default)]
 pub struct UniformSampler2D{
     id: i32
 }
@@ -19,6 +24,14 @@ impl UniformMat4{
     pub fn set(&self, data: &[f32;16]){
         unsafe{
             gl::UniformMatrix4fv(self.id, 1, gl::FALSE, &data[0] as *const GLfloat);
+        }
+    }
+}
+
+impl UniformVec4 {
+    pub fn set(&self, r:f32, g:f32, b:f32, a: f32){
+        unsafe{
+            gl::Uniform4f(self.id, r, g, b, a);
         }
     }
 }
@@ -51,6 +64,7 @@ macro_rules! uni_from {
 
 uni_from!(UniformMat4);
 uni_from!(UniformVec3);
+uni_from!(UniformVec4);
 uni_from!(UniformSampler2D);
 
 #[macro_export]
