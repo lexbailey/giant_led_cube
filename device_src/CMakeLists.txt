@@ -24,7 +24,7 @@ target_link_libraries(CubeDevice pico_stdlib hardware_pwm PicoLed device)
 
 pico_sdk_init()
 
-include("PicoLed/PicoLed.cmake")
+include(PicoLED/PicoLed.cmake)
 
 add_dependencies(CubeDevice LibDevice)
 

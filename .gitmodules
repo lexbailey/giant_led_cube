@@ -1,3 +1,9 @@
 [submodule "device_src/PicoLED"]
 	path = device_src/PicoLED
 	url = git@github.com:ForsakenNGS/PicoLED.git
+[submodule "device_src/pico-sdk"]
+	path = device_src/pico-sdk
+	url = https://github.com/raspberrypi/pico-sdk.git
+[submodule "controller/device_src/pico-sdk"]
+	path = controller/device_src/pico-sdk
+	url = https://github.com/raspberrypi/pico-sdk.git
