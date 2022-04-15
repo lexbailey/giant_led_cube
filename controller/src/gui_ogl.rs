@@ -284,19 +284,16 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
         let sz = gfx.window.window().inner_size();
         let ww = sz.width as f32;
         let wh = sz.height as f32;
-        const RATIO: f32 = 16.0/9.0;
-        //const RATIO: f32 = 1.0;
+        const RATIO: f32 = 16.0/9.0; // Y ranges from -1.0 to +1.0, X ranges from -RATIO to +RATIO
 
-        // TODO fix the discontinuities here
         let global_transform = if ww < (wh * RATIO){
             let scale = ww / (wh * RATIO);
-            T::scale(1.0, RATIO*scale,1.0)
+            T::scale(1.0/RATIO, scale,1.0)
         }
         else{
             let scale = wh / (ww / RATIO);
             T::scale(scale/RATIO,1.0,1.0)
         };
-        println!("{:?}", global_transform);
         
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
