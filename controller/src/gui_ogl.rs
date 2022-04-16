@@ -1,6 +1,8 @@
 extern crate gl;
 extern crate glutin;
 
+use glutin::dpi::PhysicalPosition;
+
 mod affine;
 use gl::types::*;
 use std::mem;
@@ -113,6 +115,8 @@ struct DataModel{
     ,r: f32
     ,diff: f32
     ,frames: i32
+    ,test_start: Instant
+    ,test_time: Duration
 }
 
 
@@ -133,6 +137,8 @@ struct RenderData{
     ,font: Font
     ,texture: u32
     ,font_scale: f32
+    ,cur: PhysicalPosition<f64>
+    ,s_cur: PhysicalPosition<f64>
 }
 
 fn init_render_data() -> RenderData{
@@ -264,6 +270,8 @@ fn init_render_data() -> RenderData{
             ,font: font
             ,texture: texture
             ,font_scale: 1.0 // make this a config option??
+            ,cur: PhysicalPosition{x:0.0,y:0.0}
+            ,s_cur: PhysicalPosition{x:0.0,y:0.0}
         }
     };
     gfx_objs
@@ -342,7 +350,14 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
         gfx.image_shader.u_image_geom.set(&image_geom.data);
         gfx.image_shader.u_translate.set(&image_translate.data);
-        gfx.image_shader.u_color.set(0.2,1.0,0.5, 0.0);
+        let (cx, cy) = (gfx.s_cur.x as f32, gfx.s_cur.y as f32);
+        let hover = cx > x && cx < (x + width) && cy < y && cy > (y - height);
+        if hover{ 
+            gfx.image_shader.u_color.set(0.9,1.0,0.9, 0.0);
+        }
+        else{
+            gfx.image_shader.u_color.set(0.5,1.0,0.5, 0.0);
+        }
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
     }
     render_text(gfx, global_transform, win_pix_transform, s, x+20.0, y-05.0, pt, text_color);
@@ -355,6 +370,8 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
         ,r:0.0
         ,diff: 0.0
         ,frames:0
+        ,test_start: Instant::now()
+        ,test_time: Duration::from_millis(0)
     };
 
     fn update(data: &mut DataModel){
@@ -381,17 +398,30 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             Tf::scale((wh / (ww / RATIO))/RATIO,1.0,1.0)
         };
 
+        const fw:f32  = 1920.0;
+        const fh:f32  = 1080.0;
+
         // Calculate the transform to 1:1 window pixel scale, applied after global transform, pretend the screen is 1920x1080
-        let win_pix_transform = if ww < (wh * RATIO) {
-             //let s = (1.0*RATIO)/ww; // absolute pixel size (items on screen maintain absoluse size as window scales)
-             let s = (1.0*RATIO)/(1920.0/2.0); // fixed "fake" screen size, scaled to fit. (whole window image is scaled)
-             Tf::scale(s, s, 1.0)
+        let pscale = if ww < (wh * RATIO) {
+             //(1.0*RATIO)/ww // absolute pixel size (items on screen maintain absoluse size as window scales)
+             (1.0*RATIO)/(fw/2.0) // fixed "fake" screen size, scaled to fit. (whole window image is scaled)
         }
         else{
-             //let s = 1.0/wh;
-             let s = 2.0/1080.0;
-             Tf::scale(s, s, 1.0)
+             //1.0/wh
+             2.0/fh
         };
+        let win_pix_transform = Tf::scale(pscale, pscale, 1.0);
+        gfx.s_cur = PhysicalPosition{
+            x: gfx.cur.x / ww as f64 * fw as f64
+            ,y: -gfx.cur.y / wh as f64 * fh as f64
+        };
+        if ww < (wh * RATIO){
+            gfx.s_cur.y /= (ww / (wh * RATIO)) as f64;
+        }
+        else{
+            gfx.s_cur.x /= ((wh / (ww / RATIO))) as f64;
+        }
+
         
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
@@ -434,8 +464,11 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
 
+            let text = |s, x, y, pt, col|{
+                render_text(&gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
+            };
             let black_text = |s, x, y, pt|{
-                render_text(&gfx, &global_transform, &win_pix_transform, s, x, y, pt, (0.0,0.0,0.0));
+                text(s,x,y,pt,(0.0,0.0,0.0));
             };
             let button = |s, x, y, w, h|{
                 render_button(&gfx, &global_transform, &win_pix_transform, s, x, y, w, h, 80.0, (0.0,0.0,0.0));
@@ -443,6 +476,13 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
             black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
             button("Scramble", -1920.0/2.0, 0.0, 400.0,110.0);
+
+            data.test_time = Instant::now() - data.test_start;
+
+            text(&format!("{}.{:03}", data.test_time.as_secs(), data.test_time.subsec_millis()), -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+
+            // Cursor pos debug
+            //black_text("X", gfx.s_cur.x as f32 -35.0, gfx.s_cur.y as f32+35.0, 70.0);
             
         }
         gfx.window.swap_buffers().unwrap();
@@ -460,9 +500,19 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
     let events_loop = gfx.events_loop.take();
     events_loop.unwrap().run(move |event, _win_target, cf|
         match event {
-            //glutin::event::Event::WindowEvent{ event: glutin::event::WindowEvent::CloseRequested,..} => std::process::exit(0)
-            Event::WindowEvent{ event: WindowEvent::CloseRequested,..} => *cf = ControlFlow::Exit
-            ,Event::WindowEvent{ event: WindowEvent::Resized(newsize),..} => gfx.window.resize(newsize)
+            Event::WindowEvent{ event: ev,..} => {
+                match ev {
+                    WindowEvent::CloseRequested => {*cf = ControlFlow::Exit;}
+                    ,WindowEvent::Resized(newsize) => {gfx.window.resize(newsize);}
+                    ,WindowEvent::CursorMoved{ position: p,.. } => {
+                        let sz = gfx.window.window().inner_size();
+                        let ww = sz.width as f64;
+                        let wh = sz.height as f64;
+                        gfx.cur = PhysicalPosition::<f64>{x: p.x - (ww/2.0), y: p.y - (wh/2.0)};
+                    }
+                    ,_=>{}
+                }
+            }
             ,Event::RedrawRequested(_win) => {
                 draw(&mut data, &mut gfx, &state);
             }
