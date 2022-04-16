@@ -2,6 +2,7 @@ extern crate gl;
 extern crate glutin;
 
 use glutin::dpi::PhysicalPosition;
+use glutin::event::{ElementState, WindowEvent, MouseButton};
 
 mod affine;
 use gl::types::*;
@@ -23,6 +24,7 @@ use cube_model as cube;
 use cube::Cube;
 
 use std::sync::{Arc,Mutex};
+use std::sync::mpsc::Sender;
 
 use fontdue::Font;
 
@@ -123,6 +125,32 @@ struct DataModel{
 use glutin::ContextWrapper;
 use glutin::PossiblyCurrent;
 
+struct Button{
+    x: f32
+    ,y: f32
+    ,w: f32
+    ,h: f32
+    ,label: String
+    ,id: String
+    ,click_state: u32
+    ,pt: f32
+}
+
+impl Button {
+    fn new(x: f32, y: f32, w: f32, h: f32, label: String, id: String, pt: f32) -> Button{
+        Button{
+            x
+            ,y
+            ,w
+            ,h
+            ,label
+            ,click_state: 0
+            ,pt
+            ,id
+        }
+    }
+}
+
 struct RenderData{
     shader: CubeShader
     ,image_shader: ImageShader
@@ -139,6 +167,9 @@ struct RenderData{
     ,font_scale: f32
     ,cur: PhysicalPosition<f64>
     ,s_cur: PhysicalPosition<f64>
+    ,pressed: bool
+    ,released: bool
+    ,buttons: RefCell<Vec<Button>>
 }
 
 fn init_render_data() -> RenderData{
@@ -256,6 +287,8 @@ fn init_render_data() -> RenderData{
     
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
 
+        let scramble_button = Button::new(-1920.0/2.0, 0.0, 390.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
+
         RenderData{
             shader: cube_shader
             ,image_shader: image_shader
@@ -272,6 +305,9 @@ fn init_render_data() -> RenderData{
             ,font_scale: 1.0 // make this a config option??
             ,cur: PhysicalPosition{x:0.0,y:0.0}
             ,s_cur: PhysicalPosition{x:0.0,y:0.0}
+            ,buttons: RefCell::new(vec![scramble_button])
+            ,pressed: false
+            ,released: false
         }
     };
     gfx_objs
@@ -323,8 +359,8 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
     }
 }
 
-fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, s: &str, x: f32, y: f32, width: f32, height: f32, pt: f32, text_color: (f32,f32,f32)){
-    unsafe{
+fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, s: &str, x: f32, y: f32, width: f32, height: f32, pt: f32, text_color: (f32,f32,f32), clicked: bool) -> bool{
+    let hover = unsafe {
         gl::Disable(gl::DEPTH_TEST); //text always on top
         gfx.image_shader.use_();
         gl::Disable(gl::BLEND);
@@ -344,7 +380,12 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         let image_translate = Tf::translate(x, y-height,0.0) ;
         gfx.image_shader.u_image_geom.set(&image_geom.data);
         gfx.image_shader.u_translate.set(&image_translate.data);
-        gfx.image_shader.u_color.set(0.3,0.3,0.3, 0.0);
+        if clicked { 
+            gfx.image_shader.u_color.set(1.0,1.0,1.0, 0.0);
+        }
+        else{
+            gfx.image_shader.u_color.set(0.3,0.3,0.3, 0.0);
+        }
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         let image_geom = Tf::scale(width-20.0, height-20.0, 1.0);
         let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
@@ -359,11 +400,19 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
             gfx.image_shader.u_color.set(0.5,1.0,0.5, 0.0);
         }
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-    }
-    render_text(gfx, global_transform, win_pix_transform, s, x+20.0, y-05.0, pt, text_color);
+        hover
+    };
+    render_text(gfx, global_transform, win_pix_transform, s, x+20.0, y-0.0, pt, text_color);
+    hover
 }
 
-fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
+impl Button{
+    fn render(&self, gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf) -> bool{
+        render_button(gfx, global_transform, win_pix_transform, &self.label, self.x, self.y, self.w, self.h, self.pt, (0.0,0.0,0.0), self.click_state == 1)
+    }
+}
+
+fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<FromGUI>){
 
     let mut data = DataModel{
         d:0.0
@@ -384,7 +433,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
     }
 
 
-    fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>){
+    fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>, sender: &Sender<FromGUI>){
         let state = state.lock().unwrap();
         let sz = gfx.window.window().inner_size();
         let ww = sz.width as f32;
@@ -470,16 +519,50 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
             let black_text = |s, x, y, pt|{
                 text(s,x,y,pt,(0.0,0.0,0.0));
             };
-            let button = |s, x, y, w, h|{
-                render_button(&gfx, &global_transform, &win_pix_transform, s, x, y, w, h, 80.0, (0.0,0.0,0.0));
-            };
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
             black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
-            button("Scramble", -1920.0/2.0, 0.0, 400.0,110.0);
-
             data.test_time = Instant::now() - data.test_start;
 
             text(&format!("{}.{:03}", data.test_time.as_secs(), data.test_time.subsec_millis()), -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+            let mut do_hover = false;
+            for button in &mut*gfx.buttons.borrow_mut(){
+                let hover = button.render(&gfx, &global_transform, &win_pix_transform);
+                if hover{
+                    do_hover = true;
+                    if gfx.pressed{
+                        button.click_state = 1;
+                    }
+                    if gfx.released && button.click_state == 1{
+                        button.click_state = 2;
+                    }
+                }
+            }
+            use glutin::window::CursorIcon;
+            if do_hover{
+                gfx.window.window().set_cursor_icon(CursorIcon::Hand);
+            }
+            else{
+                gfx.window.window().set_cursor_icon(CursorIcon::Default);
+            }
+            for button in &mut*gfx.buttons.borrow_mut(){
+                if button.click_state == 1 && gfx.released{
+                    button.click_state = 0;
+                }
+                if button.click_state == 2{
+                    button.click_state = 0;
+                    use client::FromGUI::*;
+                    match button.id.as_ref(){
+                        "scramble" => {
+                            sender.send(StartGame());
+                        }
+                        ,_=>{}
+                    }
+                }
+            }
+            gfx.pressed = false;
+            gfx.released = false;
+
+
 
             // Cursor pos debug
             //black_text("X", gfx.s_cur.x as f32 -35.0, gfx.s_cur.y as f32+35.0, 70.0);
@@ -510,16 +593,20 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>){
                         let wh = sz.height as f64;
                         gfx.cur = PhysicalPosition::<f64>{x: p.x - (ww/2.0), y: p.y - (wh/2.0)};
                     }
+                    ,WindowEvent::MouseInput{button:b, state:s, ..} => {
+                        gfx.pressed |= b == MouseButton::Left && s == ElementState::Pressed;
+                        gfx.released |= b == MouseButton::Left && s == ElementState::Released;
+                    }
                     ,_=>{}
                 }
             }
             ,Event::RedrawRequested(_win) => {
-                draw(&mut data, &mut gfx, &state);
+                draw(&mut data, &mut gfx, &state, &sender);
             }
             ,Event::RedrawEventsCleared => {
                 let start = Instant::now();
                 update(&mut data);
-                draw(&mut data, &mut gfx, &state);
+                draw(&mut data, &mut gfx, &state, &sender);
                 *cf = ControlFlow::WaitUntil(last_frame_start+frame_duration); last_frame_start = start;
             }
             ,_ => ()
@@ -539,5 +626,5 @@ fn main() {
     use client::FromGUI::*;
     sender.send(Connect(secret, addr));
     sender.send(SetState(Cube::new()));
-    ui_loop(gfx, state);
+    ui_loop(gfx, state, sender);
 }

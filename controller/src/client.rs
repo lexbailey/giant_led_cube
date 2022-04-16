@@ -618,7 +618,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut twist = Twist::from_string("F").unwrap();
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
-                                for _ in 0..1{
+                                for _ in 0..30{
                                     while twist == last_twist{
                                         twist = Twist{
                                             face: rng.gen_range(0..6)
