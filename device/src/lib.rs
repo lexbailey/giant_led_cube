@@ -57,7 +57,7 @@ pub extern "C" fn get_data(cube: *mut Cube, mapping: *const OutputMap5Faces, dat
 #[no_mangle]
 pub extern "C" fn update_from_string(cube: *mut Cube, s: *const u8) {
     unsafe{
-        (*cube).deserialise(&str::from_utf8(slice::from_raw_parts(s, 6*9)).unwrap());
+        let _ignored = (*cube).deserialise(&str::from_utf8(slice::from_raw_parts(s, 6*9)).unwrap());
     }
 }
 

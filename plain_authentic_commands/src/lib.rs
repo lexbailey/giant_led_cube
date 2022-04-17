@@ -178,6 +178,7 @@ impl MessageHandler{
 mod tests {
     use crate::MessageHandler;
 
+    #[cfg(feature="challenge")]
     fn auth_code_parts<'a>(msg: &'a String, expected_start: &str) -> (&'a str, &'a str, &'a str){
         let start = expected_start.to_string();
         assert_eq!(msg[0..start.len()], start);

@@ -668,3 +668,4 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
     (gui_state, from_gui_sender, to_gui_receiver, thread)
 }
 
+

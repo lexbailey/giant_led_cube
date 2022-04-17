@@ -424,7 +424,7 @@ mod tests {
         let text = c.serialise();
         assert_eq!(&text, "WWWWWWWWWBBBRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBYYYYYYYYY");
         let mut c = Cube::new();
-        c.deserialise(&text);
+        c.deserialise(&text).expect("deserialise failed");
         let text2 = c.serialise();
         assert_eq!(&text, &text2);
         c.twist(Twist{face:TOP, reverse:true});
@@ -486,7 +486,7 @@ mod tests {
     fn do_twist_seq(){
         let mut c = Cube::new();
         let superflip = "S U B2 D2 M D' M2 S U R2 D M2 U B2 U S2";
-        c.twists(superflip);
+        c.twists(superflip).expect("failed to twist");
         assert_eq!(c.simple_string(), "Top:\nYBY\nRYO\nYGY\nFront:\nGYG\nRGO\nGWG\nLeft:\nRYR\nBRG\nRWR\nBack:\nBYB\nOBR\nBWB\nRight:\nOYO\nGOB\nOWO\nBottom:\nWBW\nOWR\nWGW")
     }
 }
