@@ -523,7 +523,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
             data.test_time = Instant::now() - data.test_start;
 
-            text(&format!("{}.{:03}", data.test_time.as_secs(), data.test_time.subsec_millis()), -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+            text(&format!("{:.03}", data.test_time.as_secs_f64()), -250.0, 100.0, 170.0, (1.0,1.0,1.0));
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
                 let hover = button.render(&gfx, &global_transform, &win_pix_transform);
