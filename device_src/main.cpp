@@ -17,6 +17,8 @@ uint8_t thecube[1000];
 uint8_t mapping[1000];
 uint32_t led_data[45];
 
+#define NUM_SKIP (1)
+
 #define MODE_PLAY (0)
 #define MODE_CONFIG (1)
 #define MODE_UPDATE_READ (2)
@@ -41,8 +43,8 @@ volatile char update_buffer[BUFLEN]; // big enough for two chars per subface, or
 void update_leds(PicoLed::PicoLedController ledStrip){
     //printf("a\r\n");
     get_data(thecube, mapping, led_data);
-    for (int i = 1; i <= 45; i++){
-        int led = i - 1;
+    for (int i = NUM_SKIP; i <= 45; i++){
+        int led = i - NUM_SKIP;
         ledStrip.setPixelColor(i, PicoLed::RGB((led_data[led]>>16) & 0xff, (led_data[led] >> 8) & 0xff, led_data[led] & 0xff));
     }
     ledStrip.show();
@@ -142,6 +144,8 @@ int main(){
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
+    gpio_set_slew_rate(LED_PIN, GPIO_SLEW_RATE_FAST);
+    //gpio_set_drive_strength(LED_PIN, GPIO_DRIVE_STRENGTH_12MA);
 
     absolute_time_t t = get_absolute_time();
     for (int i = 0; i <= NUM_SWITCH_INPUTS-1; i++){
@@ -156,8 +160,8 @@ int main(){
 
     init_cube(thecube, mapping);
 
-    auto ledStrip = PicoLed::addLeds<PicoLed::WS2812B>(pio0, 0, LED_STRIP_PIN, LED_STRIP_LEN, PicoLed::FORMAT_GRB);
-    ledStrip.setBrightness(64);
+    auto ledStrip = PicoLed::addLeds<PicoLed::WS2812B>(pio0, 0, LED_STRIP_PIN, LED_STRIP_LEN, PicoLed::FORMAT_RGB);
+    ledStrip.setBrightness(40);
     ledStrip.setPixelColor(0, PicoLed::RGB(0,0,0));
 
     int next_mode = MODE_PLAY;

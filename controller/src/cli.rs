@@ -212,6 +212,30 @@ fn main() {
                                 let args_str = &cmd[name.len()..cmd.len()];
                                 let args = parts.collect::<Vec<&str>>();
                                 match name.as_ref(){
+                                    "anim" => {
+                                        let mut data = state.lock().unwrap();
+                                        let t = cube::Twist::from_string(args[0]);
+                                        match t{
+                                            Err(_) => { println!("bad argument"); }
+                                            ,Ok(t) => {
+                                                let anim = data.cube.twist(t);
+                                                let oldcube = data.cube;
+                                                let ms = 30;
+                                                data.cube = anim[0];
+                                                draw(&gfx, &data);
+                                                thread::sleep(std::time::Duration::from_millis(ms));
+                                                data.cube = anim[1];
+                                                draw(&gfx, &data);
+                                                thread::sleep(std::time::Duration::from_millis(ms));
+                                                data.cube = anim[2];
+                                                draw(&gfx, &data);
+                                                thread::sleep(std::time::Duration::from_millis(ms));
+                                                data.cube = oldcube;
+                                                draw(&gfx, &data);
+                                                thread::sleep(std::time::Duration::from_millis(ms));
+                                            }
+                                        }
+                                    }
                                     "twist" => {
                                         let mut data = state.lock().unwrap();
                                         match data.cube.twists(args_str){

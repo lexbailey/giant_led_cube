@@ -16,6 +16,10 @@ use std::time::{Instant, Duration};
 use std::cmp::min;
 use std::fmt::{self,Display};
 
+use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
+use rand::Rng;
+use std::io::Cursor;
+
 #[derive(CLIParser, Debug)]
 struct Args{
     #[clap()]
@@ -65,6 +69,12 @@ enum ClientEvent{
 enum Event{
     Client(ClientEvent)
     ,Device(DeviceEvent)
+}
+
+enum Sound{
+    Twist()
+    ,Win()
+    ,NoMoreSounds()
 }
 
 #[derive(Error, Debug)]
@@ -522,11 +532,42 @@ fn main() {
         None
     };
 
+    let (sound_sender, sound_events) = channel::<Sound>();
+
+    let sound_thread = std::thread::spawn(move||{
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sound_files: Vec<&[u8]> = include!("sounds.rs");
+        let sounds: Vec<Buffered<_>> = (1..=11).map(|n|{
+            let file = BufReader::new(Cursor::new(sound_files[n]));
+            Decoder::new(file).unwrap().buffered()
+        }).collect();
+
+
+        let mut rng = rand::thread_rng();
+        for ev in sound_events.iter() {
+            match ev {
+                Sound::Twist() => {
+                    let n = rng.gen_range(0..11);
+                    stream_handle.play_raw(sounds[n].clone().convert_samples());
+                }
+                ,Sound::Win() => {
+                    // TODO load a win sound
+                    //stream_handle.play_raw(win_sound.clone().convert_samples());
+                }
+                ,Sound::NoMoreSounds() => {
+                    break;
+                }
+            }
+        }
+    });
+
+
     let mut cube = Cube::new();
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
 
     let mut game_state = GameState::default();
+
 
     for event in receiver.iter(){
         match event {
@@ -606,10 +647,12 @@ fn main() {
                             if game_state.twist(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
+                            sound_sender.send(Sound::Twist());
                         }
                         ,DeviceEvent::Solved() => {
                             game_state.solved();
                             sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                            sound_sender.send(Sound::Win());
                             match game_state.recorded_time(){
                                 Some(time) => {sender.send(StreamEvent::ReportTime(time));}
                                 ,_=>{}
@@ -629,4 +672,6 @@ fn main() {
     let _ignored = device_thread.join();
     if let Some(t) = tcp_thread { let _ignored = t.join(); };
     if let Some(t) = serial_thread { let _ignored = t.join(); };
+    sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");
+    let _ignored = sound_thread.join();
 }

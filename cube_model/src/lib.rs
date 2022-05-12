@@ -58,12 +58,33 @@ impl Face{
         }
     }
 
-    fn copy_from(&mut self, other: [SubFace;9], doffset: isize, dstep: isize, soffset: isize, sstep: isize) {
-        for i in 0..3{
-            let s = (soffset + (i * sstep)) as usize;
-            let d = (doffset + (i * dstep)) as usize;
-            self.subfaces[d].next_color = other[s].color;
+    fn copy_from(&mut self, other: [SubFace;9], doffset: isize, dstep: isize, soffset: isize, sstep: isize) -> [[SubFace;9];2] {
+        let window: [SubFace;6] = [
+            self.subfaces[doffset as usize]
+            ,self.subfaces[(doffset+dstep) as usize]
+            ,self.subfaces[(doffset+dstep+dstep) as usize]
+            ,other[soffset as usize]
+            ,other[(soffset+sstep) as usize]
+            ,other[(soffset+sstep+sstep) as usize]
+        ];
+
+        let mut intermediates = [self.subfaces;2];
+
+        for f in 0..2{
+            for i in 0..3{
+                let d = (doffset + (i * dstep)) as usize;
+                let c = window[f + i as usize + 1].color;
+                intermediates[f][d].color = c;
+                intermediates[f][d].next_color = c;
+            }
         }
+
+        for i in 0..3{
+            let d = (doffset + (i * dstep)) as usize;
+            self.subfaces[d].next_color = window[3+i as usize].color;
+        }
+
+        intermediates
     }
 
     fn update(&mut self){
@@ -72,8 +93,18 @@ impl Face{
         }
     }
 
-    fn twist(&mut self, reverse: bool){
+    fn twist(&mut self, reverse: bool) -> [SubFace;9]{
         let f = &self.subfaces;
+        let intermediate = if !reverse {[
+            f[3], f[0], f[1]
+            ,f[6], f[4], f[2]
+            ,f[7], f[8], f[5]
+        ]}
+        else {[
+            f[1], f[2], f[5]
+            ,f[0], f[4], f[8]
+            ,f[3], f[6], f[7]
+        ]};
         self.subfaces = if !reverse {[
             f[6],f[3],f[0]
             ,f[7],f[4],f[1]
@@ -84,6 +115,7 @@ impl Face{
             ,f[1],f[4],f[7]
             ,f[0],f[3],f[6]
         ]};
+        intermediate
     }
 
     #[cfg(not(feature="without_std"))]
@@ -297,18 +329,25 @@ impl Cube{
         s
     }
 
-    pub fn twist(&mut self, twist: Twist){
+    pub fn twist(&mut self, twist: Twist) -> [Cube; 3]{
         let face = twist.face;
         let reverse = twist.reverse;
+        let mut intermediates = [*self;3];
+
         if face < FAKE_FACE_MIN {
-            (&mut self.faces[face]).twist(reverse);
+            let anim = (&mut self.faces[face]).twist(reverse);
+            intermediates[1].faces[face].subfaces = anim;
+            intermediates[2].faces[face].subfaces = anim;
         }
 
         for i in 0..4{
             let (adj, doffset, dstep) = self.faces[face].adjacent[i];
             let (next, soffset, sstep) = self.faces[face].adjacent[((((i as isize) + if reverse {1} else {-1})+4)%4)as usize];
             let subs = self.faces[next].subfaces;
-            self.faces[adj].copy_from(subs, doffset, dstep, soffset, sstep);
+            let edge_anim = self.faces[adj].copy_from(subs, doffset, dstep, soffset, sstep);
+            intermediates[0].faces[adj].subfaces = edge_anim[0];
+            intermediates[1].faces[adj].subfaces = edge_anim[0];
+            intermediates[2].faces[adj].subfaces = edge_anim[1];
         }
 
         for i in 0..4{
@@ -323,6 +362,8 @@ impl Cube{
                 assert!(s.color == s.next_color);
             }
         }
+
+        intermediates
     }
 
     #[cfg(not(feature="without_std"))]
@@ -414,6 +455,17 @@ mod tests {
             let result = cube.simple_string();
             assert_eq!(result, expected.to_string());
         }
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn twist_animation() {
+        let mut cube = Cube::new();
+        let anim = cube.twist(Twist::from_string("t").unwrap());
+        println!("{}\n", anim[0].simple_string());
+        println!("{}\n", anim[1].simple_string());
+        println!("{}\n", anim[2].simple_string());
+        assert_eq!(anim[0].simple_string(), "".to_string());
     }
 
     #[cfg(not(feature="without_std"))]
