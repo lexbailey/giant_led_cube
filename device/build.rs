@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use cbindgen::{Config, Language};
 use std::io::Write;
 
+// TODO this is generated on the host, so it picks the sizes for the host machine
+// if this is compiled on a 64 bit host, then it will probably be an over-estimate, which is fine
+// regardless, this number could be wrong. Given it's probably an over-estimate it's fine for now
+// need to get the target compiler to generate the sizes somehow, instead of the host compiler.
 fn size_header_text() -> String {
     let mut result = String::new();
     for s in [
