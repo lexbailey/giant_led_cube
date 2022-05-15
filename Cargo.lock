@@ -539,6 +539,13 @@ name = "cube_model"
 version = "0.1.0"
 
 [[package]]
+name = "cube_model_info"
+version = "0.1.0"
+dependencies = [
+ "cube_model",
+]
+
+[[package]]
 name = "darling"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

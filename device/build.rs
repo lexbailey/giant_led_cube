@@ -5,6 +5,23 @@ extern crate cbindgen;
 use std::{env, process::Command};
 use std::path::PathBuf;
 use cbindgen::{Config, Language};
+use std::io::Write;
+
+fn size_header_text() -> String {
+    let mut result = String::new();
+    for s in [
+        format!("#define COLORS_ENUM_BYTES ({})\n", std::mem::size_of::<cube_model::Colors>())
+        ,format!("#define SUBFACE_STRUCT_BYTES ({})\n", std::mem::size_of::<cube_model::SubFace>())
+        ,format!("#define FACE_STRUCT_BYTES ({})\n", std::mem::size_of::<cube_model::Face>())
+        ,format!("#define TWIST_STRUCT_BYTES ({})\n", std::mem::size_of::<cube_model::Twist>())
+        ,format!("#define CUBE_STRUCT_BYTES ({})\n", std::mem::size_of::<cube_model::Cube>())
+        ,format!("#define SWITCH_ARRAY_BYTES ({})\n", std::mem::size_of::<cube_model::SwitchMap5Faces>())
+        ,format!("#define OUTPUT_ARRAY_BYTES ({})\n", std::mem::size_of::<cube_model::OutputMap5Faces>())
+    ].iter() {
+        result.push_str(s);
+    }
+    result
+}
 
 fn main() {
     // Run cbindgen
@@ -42,6 +59,17 @@ fn main() {
     let git_version = format!("{}{}", git_hash.trim(), if git_modified { "-modified" } else { "" });
 
     println!("cargo:rustc-env=GIT_VERSION={}", git_version);
+
+    let sizes_output_file = target_dir()
+        .join("include")
+        .join("model_size_info.h")
+        .display()
+        .to_string();
+
+    let mut f = std::fs::File::create(sizes_output_file).expect("failed to create size info file");
+    let output = size_header_text();
+    f.write(output.as_bytes());
+
 }
 
 /// Find the location of the `target/` directory. Note that this may be 

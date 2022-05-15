@@ -7,14 +7,15 @@ typedef void Cube;
 typedef void OutputMap5Faces;
 extern "C" {
 #include "../device/target/include/cube_data.h"
+#include "../device/target/include/model_size_info.h"
 }
 
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 const uint LED_STRIP_PIN = 7;
 const uint LED_STRIP_LEN = 45+1; // five faces of 9 LEDs, plus the initial skipped LED
 
-uint8_t thecube[1000];
-uint8_t mapping[1000];
+uint8_t thecube[CUBE_STRUCT_BYTES];
+uint8_t mapping[OUTPUT_ARRAY_BYTES];
 uint32_t led_data[45];
 
 #define NUM_SKIP (1)
@@ -24,6 +25,7 @@ uint32_t led_data[45];
 #define MODE_UPDATE_READ (2)
 #define MODE_LEDMAP_READ (3)
 #define MODE_SWITCHMAP_READ (4)
+#define MODE_BRIGHTNESS (5)
 
 #define NUM_SUBFACES (6*9)
 #define NUM_SWITCH_INPUTS (20)
@@ -61,6 +63,7 @@ const int switch_inputs[NUM_SWITCH_INPUTS] = {
 
 const char* blank = "f ";
 
+uint8_t brightness = 40; // start on low brightness
 
 const char* switch_map[MAX_INPUT_NUM+1];
 /*
@@ -161,7 +164,7 @@ int main(){
     init_cube(thecube, mapping);
 
     auto ledStrip = PicoLed::addLeds<PicoLed::WS2812B>(pio0, 0, LED_STRIP_PIN, LED_STRIP_LEN, PicoLed::FORMAT_RGB);
-    ledStrip.setBrightness(40);
+    ledStrip.setBrightness(brightness);
     ledStrip.setPixelColor(0, PicoLed::RGB(0,0,0));
 
     int next_mode = MODE_PLAY;
@@ -171,7 +174,12 @@ int main(){
         int ic = getchar_timeout_us(0);
         if (ic != PICO_ERROR_TIMEOUT){
             char c = (char) ic & 0xff;
-            if (c == 'c'){ // CONFIG mode
+            if (mode = MODE_BRIGHTNESS) {
+                brightness = c;
+                ledStrip.setBrightness(brightness);
+                mode = next_mode;
+            }
+            else if (c == 'c'){ // CONFIG mode
                 mode = MODE_CONFIG;
             }
             else if (c == 'p'){ // PLAY mode
@@ -191,6 +199,10 @@ int main(){
                 next_mode = mode;
                 mode = MODE_SWITCHMAP_READ;
                 update_pos = 0;
+            }
+            else if (c == '%'){ // brightness control
+                next_mode = mode;
+                mode = MODE_BRIGHTNESS;
             }
             else {
                 if (mode == MODE_UPDATE_READ){
