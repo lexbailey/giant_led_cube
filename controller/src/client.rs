@@ -249,6 +249,7 @@ pub enum FromGUI {
     ,MapLED(usize, usize)
     ,BacktrackLEDDetect()
     ,ShutDown()
+    ,SetBrightness(String)
 }
 
 impl FromGUI{
@@ -644,6 +645,9 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                             }
                             ,ShutDown() => {
                                 return Ok(true);
+                            }
+                            ,SetBrightness(b) => {
+                                command_queue.push_back(("set_brightness".to_string(), vec![b]));
                             }
                         }
                     }

@@ -64,6 +64,7 @@ enum ClientEvent{
     ,UpdateInputMap(String)
     ,Play()
     ,StartTimedGame()
+    ,SetBrightness(u8)
 }
 
 enum Event{
@@ -267,6 +268,20 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                             }
                                             ,"timed_start" => {
                                                 sender.send(Event::Client(ClientEvent::StartTimedGame()))?;
+                                            }
+                                            ,"set_brightness" => {
+                                                if args.len() != 1{
+                                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                                    write_stream.write(msg.as_bytes())?;
+                                                }
+                                                let b = u8::from_str(&args[0]);
+                                                match b {
+                                                    Err(_) => {
+                                                        let msg = auth.construct_reply("bad_argument", &vec![&command]);
+                                                        write_stream.write(msg.as_bytes())?;
+                                                    }
+                                                    ,Ok(b) => {sender.send(Event::Client(ClientEvent::SetBrightness(b)))?;}
+                                                }
                                             }
                                             ,_=>{
                                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
@@ -631,6 +646,11 @@ fn main() {
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
                             // TODO sync state on connect: sender.send(StreamEvent::GUI(GUIEvent::SyncState(somethingsomething)));
+                        }
+                        ,ClientEvent::SetBrightness(b) => {
+                            device_write.write(b"%")?;
+                            device_write.write(&[b])?;
+                            device_write.flush()?;
                         }
                     }
                     Ok(())

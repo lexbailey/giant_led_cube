@@ -263,6 +263,14 @@ fn main() {
                                             }
                                         }
                                     }
+                                    ,"brightness" => {
+                                        if args.len() != 1{
+                                            println!("brightness requires one parameter, a number in the range 0 to 255");
+                                        }
+                                        else{
+                                            sender.send(SetBrightness(args[0].to_string()))?;
+                                        }
+                                    }
                                     ,_ => {println!("Unknown command: {}",cmd);}
                                 }
                             }
