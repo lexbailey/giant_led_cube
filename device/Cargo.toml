@@ -8,6 +8,7 @@ cube_model = { path="../cube_model", features = ["without_std"]}
 
 [build-dependencies]
 cbindgen = "0.20.0"
+cube_model = { path="../cube_model", features = ["without_std"]}
 
 [lib]
 crate-type = ["staticlib"]
