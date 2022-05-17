@@ -747,27 +747,35 @@ fn main() {
                 }
             }
             Event::Device(d_ev) => {
-                if let Some(sender) = gui_sender.as_ref(){
-                    match d_ev {
-                        DeviceEvent::Twist(twist) => {
-                            if game_state.twist(){
+                match d_ev {
+                    DeviceEvent::Twist(twist) => {
+                        if game_state.twist(){
+                            if let Some(sender) = gui_sender.as_ref(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
-                            sound_sender.send(Sound::Twist());
-                            datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
                         }
-                        ,DeviceEvent::Solved() => {
-                            game_state.solved();
-                            sender.send(StreamEvent::SyncTimers(game_state.serialise()));
-                            sound_sender.send(Sound::Win());
-                            match game_state.recorded_time(){
-                                Some(time) => {sender.send(StreamEvent::ReportTime(time));}
-                                ,_=>{}
-                            }
-                            datapoints_sender.try_send(Datapoint::solved(&game_state));
-                        }
-                        ,_=>{}
+                        sound_sender.send(Sound::Twist());
+                        datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
                     }
+                    ,DeviceEvent::Solved() => {
+                        game_state.solved();
+                        if let Some(sender) = gui_sender.as_ref(){
+                            sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                        }
+                        sound_sender.send(Sound::Win());
+                        match game_state.recorded_time(){
+                            Some(time) => {
+                                if let Some(sender) = gui_sender.as_ref(){
+                                    sender.send(StreamEvent::ReportTime(time));
+                                }
+                            }
+                            ,_=>{}
+                        }
+                        datapoints_sender.try_send(Datapoint::solved(&game_state));
+                    }
+                    ,_=>{}
+                }
+                if let Some(sender) = gui_sender.as_ref(){
                     match sender.send(StreamEvent::GUI(d_ev)) {
                         Err(e) => {println!("Failed to send device event to client, client disconnected?: {:?}", e)}
                         ,Ok(_) => {}
