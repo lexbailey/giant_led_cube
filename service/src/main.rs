@@ -203,7 +203,7 @@ impl GameState{
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Datapoint {
-    #[serde(rename = "index_id")]
+    #[serde(rename = "indexId")]
     pub dataset_name: String,
     pub timestamp: String,
     pub strings: Vec<String>,
