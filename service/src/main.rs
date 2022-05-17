@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 use std::thread;
-use std::sync::mpsc::{channel,Sender,SendError};
+use std::sync::mpsc::{channel,sync_channel,SyncSender,Sender,Receiver,SendError};
 use std::io::{Write,Read,BufReader,BufRead};
 use std::str::FromStr;
 use std::fs::File;
@@ -19,6 +19,7 @@ use std::fmt::{self,Display};
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
+use chrono::Local;
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -39,6 +40,7 @@ struct CubeConfig{
     led_map: String
     ,input_map: String
     ,secret: String
+    ,datapoint_secret: String
 }
 
 enum DeviceEvent{
@@ -118,6 +120,10 @@ impl GameState{
         self.ended = None;
     }
 
+    fn game_id(&self) -> Option<String> {
+        self.started.map(|i| format!("{:?}", i))
+    }
+
     fn is_inspecting(&self) -> bool {
         self.started.is_some() && self.inspection_end.is_none()
     }
@@ -192,6 +198,81 @@ impl GameState{
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Datapoint {
+    #[serde(rename = "index_id")]
+    pub dataset_name: String,
+    pub timestamp: String,
+    pub strings: Vec<String>,
+    pub doubles: Vec<f64>,
+}
+
+impl Datapoint {
+    fn timestamp() -> String {
+        Local::now().to_rfc3339()
+    }
+
+    fn start_timed_game(game_state: &GameState) -> Datapoint {
+        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
+        Datapoint {
+            dataset_name: "start_timed_name".to_string(),
+            timestamp: Datapoint::timestamp(),
+            strings: vec![
+                game_id,
+            ],
+            doubles: vec![],
+        }
+    }
+
+    fn twist(game_state: &GameState, twist: &Twist) -> Datapoint {
+        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
+        let game_duration_so_far = Instant::now() - game_state.started.unwrap_or_else(|| Instant::now());
+        Datapoint {
+            dataset_name: "twist".to_string(),
+            timestamp: Datapoint::timestamp(),
+            strings: vec![
+                game_id,
+                format!("{}", twist),
+            ],
+            doubles: vec![
+                game_duration_so_far.as_secs_f64(),
+            ],
+        }
+    }
+
+    fn solved(game_state: &GameState) -> Datapoint {
+        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
+        let game_duration = game_state.recorded_time().unwrap_or(Duration::MAX);
+        Datapoint {
+            dataset_name: "twist".to_string(),
+            timestamp: Datapoint::timestamp(),
+            strings: vec![
+                game_id,
+            ],
+            doubles: vec![
+                game_duration.as_secs_f64(),
+            ],
+        }
+    }
+}
+
+fn handle_datapoints(datapoint_receiver: Receiver<Datapoint>, datapoint_secret: String) -> std::thread::JoinHandle<()> {
+    thread::spawn(move||{
+        for datapoint in datapoint_receiver {
+            let client = reqwest::blocking::Client::new();
+            let res = client.post("https://cube-data-input.46bit.workers.dev")
+                .json(&datapoint)
+                .header("Authorization", format!("Bearer {}", datapoint_secret))
+                .timeout(Duration::from_secs(5))
+                .send();
+            if let Err(e) = res {
+                println!("Unable to send datapoints: {}", e);
+            }
+        }
+    })
 }
 
 fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>){
@@ -401,6 +482,7 @@ fn main() {
                     "led_map": "000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758"
                     ,"input_map": "000102030405060708091011121314151617"
                     ,"secret": ""
+                    ,"datapoint_secret": ""
                 }"#
             ).unwrap()
         }
@@ -413,6 +495,9 @@ fn main() {
     let dev_sender = sender.clone();
 
     let device_name = args.device;
+
+    let (datapoints_sender, datapoints_receiver) = sync_channel(10);
+    let datapoints_thread = handle_datapoints(datapoints_receiver, config.datapoint_secret.clone());
 
     let mut device = serialport::new(&device_name, 115200).open().expect("Failed to open cube device serial port.");
 
@@ -642,6 +727,7 @@ fn main() {
                             if let Some(sender) = gui_sender.as_ref(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
+                            datapoints_sender.try_send(Datapoint::start_timed_game(&game_state));
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
@@ -663,11 +749,12 @@ fn main() {
             Event::Device(d_ev) => {
                 if let Some(sender) = gui_sender.as_ref(){
                     match d_ev {
-                        DeviceEvent::Twist(_) => {
+                        DeviceEvent::Twist(twist) => {
                             if game_state.twist(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
                             sound_sender.send(Sound::Twist());
+                            datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
                         }
                         ,DeviceEvent::Solved() => {
                             game_state.solved();
@@ -677,6 +764,7 @@ fn main() {
                                 Some(time) => {sender.send(StreamEvent::ReportTime(time));}
                                 ,_=>{}
                             }
+                            datapoints_sender.try_send(Datapoint::solved(&game_state));
                         }
                         ,_=>{}
                     }
@@ -690,6 +778,7 @@ fn main() {
     }
 
     let _ignored = device_thread.join();
+    let _ignored = datapoints_thread.join();
     if let Some(t) = tcp_thread { let _ignored = t.join(); };
     if let Some(t) = serial_thread { let _ignored = t.join(); };
     sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");
