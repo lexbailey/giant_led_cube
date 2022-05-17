@@ -28,9 +28,15 @@ uint32_t led_data[45];
 #define MODE_BRIGHTNESS (5)
 
 #define NUM_SUBFACES (6*9)
-#define NUM_SWITCH_INPUTS (20)
-#define MAX_INPUT_NUM (23)
+#define NUM_SWITCH_INPUTS (18)
+#define MAX_INPUT_NUM (21)
 #define NUM_TWISTS (18)
+
+const int switch_inputs[NUM_SWITCH_INPUTS] = {
+    2,3,4,5,6,8
+    ,10,11,12,13,14,15
+    ,16,17,18,19,20,21
+};
 
 #define FACES_BUFLEN ((NUM_SUBFACES*2)+1)
 #define INPUTS_BUFLEN ((NUM_TWISTS*2)+1)
@@ -43,58 +49,27 @@ uint32_t led_data[45];
 volatile char update_buffer[BUFLEN]; // big enough for two chars per subface, or for all the inputs
 
 void update_leds(PicoLed::PicoLedController ledStrip){
-    //printf("a\r\n");
     get_data(thecube, mapping, led_data);
+    //printf("?%d %d %d %d\n;", led_data[0], led_data[1], led_data[2], led_data[3]);
     for (int i = NUM_SKIP; i <= 45; i++){
         int led = i - NUM_SKIP;
         ledStrip.setPixelColor(i, PicoLed::RGB((led_data[led]>>16) & 0xff, (led_data[led] >> 8) & 0xff, led_data[led] & 0xff));
     }
     ledStrip.show();
-    sleep_ms(2);
+    sleep_us(400);
 }
-
-const int switch_inputs[NUM_SWITCH_INPUTS] = {
-    2,3,4,5
-    ,6,22,8,9
-    ,10,11,12,13
-    ,14,15,16,17
-    ,18,19,20,21
-};
 
 const char* blank = "f ";
 
 uint8_t brightness = 40; // start on low brightness
 
+int switch_to_twist_id[MAX_INPUT_NUM+1];
+int twist_id_to_switch[18];
 const char* switch_map[MAX_INPUT_NUM+1];
-/*
- = {
-"  "
-,"  "
-,"m "
-,"m'"
-,"f'"
-,"f "
-,"b "
-,"  "
-,"l "
-,"l'"
-,"d "
-,"d'"
-,"e "
-,"e'"
-,"u'"
-,"u "
-,"  "
-,"  "
-,"s'"
-,"s "
-,"r'"
-,"r "
-,"b'"
-,"  "
-};*/
 
-absolute_time_t switch_timeout[24];
+absolute_time_t switch_last_pressed[MAX_INPUT_NUM+1];
+absolute_time_t switch_last_released[MAX_INPUT_NUM+1];
+int switch_blocked[MAX_INPUT_NUM+1];
 
 const char* twists[18] = {
     "f "
@@ -117,44 +92,84 @@ const char* twists[18] = {
     ,"s'"
 };
 
+int invert_twist(int gpio){
+    // The order of the twist names is such that the last bit indicates inverse
+    // flip the last bit to invert a twist
+    return twist_id_to_switch[switch_to_twist_id[gpio] ^ 1];
+}
+
+void log_switch_pressed(int gpio, absolute_time_t time){
+    switch_blocked[gpio] = 1;
+    switch_last_pressed[gpio] = time;
+}
+
+void log_switch_released(int gpio, absolute_time_t time){
+    switch_blocked[gpio] = 0;
+    switch_last_released[gpio] = time;
+}
+
+int can_twist(int gpio, absolute_time_t time, int skip_inverse){
+    int inverse = invert_twist(gpio);
+    if (switch_blocked[gpio] || (!skip_inverse && switch_blocked[inverse])){
+        return 0;
+    }
+    int64_t d1 = absolute_time_diff_us(switch_last_pressed[gpio], time);
+    int64_t d2 = absolute_time_diff_us(switch_last_released[inverse], time);
+    return (d1 > 150000) && (skip_inverse || (d2 > 500000));
+}
+
 int mode = MODE_PLAY;
 
 void switch_isr(uint gpio, uint32_t events){
-    absolute_time_t timeout = switch_timeout[gpio];
     absolute_time_t now = get_absolute_time();
     //printf("%d,0x%02x\n",gpio,events);
-    if (absolute_time_diff_us(now, timeout) < 0){
-        switch_timeout[gpio] = make_timeout_time_ms(200);
-        if (events & 0x4){
+    if (events & 4){
+        if (can_twist(gpio, now, mode == MODE_CONFIG)){
+            int twist_id = switch_to_twist_id[gpio];
             const char* twist = switch_map[gpio];
+            if (mode == MODE_PLAY) {
+                printf("*%s;\n", twist);
+            }
             if (mode == MODE_CONFIG) {
                 printf("i%d;\n", gpio);
             }
-            if (mode == MODE_PLAY) {
-                printf("*%s;\n", twist);
-                twist_cube(thecube, (uint8_t*)twist, 2);
-                if (is_solved(thecube)) {
-                    printf("#\n");
-                }
+            twist_cube(thecube, (uint8_t*)twist, 2);
+            if (is_solved(thecube)) {
+                printf("#\n");
             }
         }
+        log_switch_pressed(gpio, now);
+    }
+    if (events & 8){
+        log_switch_released(gpio, now);
     }
     gpio_acknowledge_irq(gpio, events);
 }
 
 int main(){
     stdio_init_all();
+    // LED flash is to make it obvious when the pico boots
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
+    for (int i = 0; i<= 5; i++){
+        sleep_ms(50);
+        gpio_put(LED_PIN, 0);
+        sleep_ms(50);
+        gpio_put(LED_PIN, 1);
+    }
     gpio_set_slew_rate(LED_PIN, GPIO_SLEW_RATE_FAST);
     //gpio_set_drive_strength(LED_PIN, GPIO_DRIVE_STRENGTH_12MA);
 
     absolute_time_t t = get_absolute_time();
+
     for (int i = 0; i <= NUM_SWITCH_INPUTS-1; i++){
         int pin = switch_inputs[i];
         switch_map[pin] = blank;
-        switch_timeout[pin] = t;
+        switch_to_twist_id[pin] = 0;
+        switch_last_pressed[pin] = t;
+        switch_last_released[pin] = t;
+        switch_blocked[pin] = 0;
         gpio_init(pin);
         gpio_set_dir(pin, GPIO_IN);
         gpio_pull_up(pin);
@@ -174,7 +189,7 @@ int main(){
         int ic = getchar_timeout_us(0);
         if (ic != PICO_ERROR_TIMEOUT){
             char c = (char) ic & 0xff;
-            if (mode = MODE_BRIGHTNESS) {
+            if (mode == MODE_BRIGHTNESS) {
                 brightness = c;
                 ledStrip.setBrightness(brightness);
                 mode = next_mode;
@@ -206,17 +221,18 @@ int main(){
             }
             else {
                 if (mode == MODE_UPDATE_READ){
-                    if ((update_pos) >= BUFLEN) { printf("?badstateupdate"); }
+                    if ((update_pos) >= BUFLEN) { printf("?badstateupdate\n;"); }
                     else{
                         update_buffer[update_pos++] = c;
                         if (update_pos >= NUM_SUBFACES) {
                             mode = next_mode;
+                            update_buffer[update_pos] = '\0';
                             update_from_string(thecube, (uint8_t *)update_buffer);
                         }
                     }
                 }
                 if (mode == MODE_LEDMAP_READ){
-                    if ((update_pos) >= BUFLEN) { printf("?badstateledmap"); }
+                    if ((update_pos) >= BUFLEN) { printf("?badstateledmap\n;"); }
                     else{
                         update_buffer[update_pos++] = c-48;
                         if (update_pos >= 90) {
@@ -226,7 +242,7 @@ int main(){
                     }
                 }
                 if (mode == MODE_SWITCHMAP_READ){
-                    if ((update_pos) >= BUFLEN) { printf("?badstateswitchmap"); }
+                    if ((update_pos) >= BUFLEN) { printf("?badstateswitchmap\n;"); }
                     else{
                         update_buffer[update_pos++] = c;
                         if (update_pos >= (18*2)) {
@@ -235,9 +251,11 @@ int main(){
                                 int p = i*2;
                                 int switch_num = ((update_buffer[p]-48)*10) + (update_buffer[p+1]-48);
                                 if (switch_num > MAX_INPUT_NUM){
-                                    printf("?numtoohigh"); //wut?
+                                    printf("?numtoohigh\n;"); //wut?
                                 }
                                 else {
+                                    switch_to_twist_id[switch_num] = i;
+                                    twist_id_to_switch[i] = switch_num;
                                     switch_map[switch_num] = twists[i];
                                 }
                             }
