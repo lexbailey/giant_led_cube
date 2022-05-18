@@ -15,6 +15,7 @@ const uint LED_STRIP_PIN = 7;
 const uint LED_STRIP_LEN = 45+1; // five faces of 9 LEDs, plus the initial skipped LED
 
 uint8_t thecube[CUBE_STRUCT_BYTES];
+uint8_t frames[3][CUBE_STRUCT_BYTES];
 uint8_t mapping[OUTPUT_ARRAY_BYTES];
 uint32_t led_data[45];
 
@@ -48,8 +49,18 @@ const int switch_inputs[NUM_SWITCH_INPUTS] = {
 #endif
 volatile char update_buffer[BUFLEN]; // big enough for two chars per subface, or for all the inputs
 
+int cur_frame = 0;
+absolute_time_t frame_time;
+
 void update_leds(PicoLed::PicoLedController ledStrip){
-    get_data(thecube, mapping, led_data);
+    absolute_time_t now = get_absolute_time();
+    if (absolute_time_diff_us(frame_time, now) > 50000){
+        cur_frame += 1;
+        if (cur_frame > 3) {cur_frame = 3;}
+        frame_time = now;
+    }
+    uint8_t *frame = cur_frame >= 3? thecube : frames[cur_frame];
+    get_data(frame, mapping, led_data);
     //printf("?%d %d %d %d\n;", led_data[0], led_data[1], led_data[2], led_data[3]);
     for (int i = NUM_SKIP; i <= 45; i++){
         int led = i - NUM_SKIP;
@@ -66,6 +77,8 @@ uint8_t brightness = 40; // start on low brightness
 int switch_to_twist_id[MAX_INPUT_NUM+1];
 int twist_id_to_switch[18];
 const char* switch_map[MAX_INPUT_NUM+1];
+int pending_twist[MAX_INPUT_NUM+1];
+absolute_time_t pending_twist_time[MAX_INPUT_NUM+1];
 
 absolute_time_t switch_last_pressed[MAX_INPUT_NUM+1];
 absolute_time_t switch_last_released[MAX_INPUT_NUM+1];
@@ -120,23 +133,28 @@ int can_twist(int gpio, absolute_time_t time, int skip_inverse){
 
 int mode = MODE_PLAY;
 
+void do_twist(int gpio){
+    const char* twist = switch_map[gpio];
+    if (mode == MODE_PLAY) {
+        printf("*%s;\n", twist);
+        twist_cube(thecube, (uint8_t*)twist, 2, frames[0], frames[1], frames[2]);
+        cur_frame = 0;
+        if (is_solved(thecube)) {
+            printf("#\n");
+        }
+    }
+    if (mode == MODE_CONFIG) {
+        printf("i%d;\n", gpio);
+    }
+}
+
 void switch_isr(uint gpio, uint32_t events){
     absolute_time_t now = get_absolute_time();
-    //printf("%d,0x%02x\n",gpio,events);
+    //printf("?%d,0x%02x\n;",gpio,events);
     if (events & 4){
         if (can_twist(gpio, now, mode == MODE_CONFIG)){
-            int twist_id = switch_to_twist_id[gpio];
-            const char* twist = switch_map[gpio];
-            if (mode == MODE_PLAY) {
-                printf("*%s;\n", twist);
-            }
-            if (mode == MODE_CONFIG) {
-                printf("i%d;\n", gpio);
-            }
-            twist_cube(thecube, (uint8_t*)twist, 2);
-            if (is_solved(thecube)) {
-                printf("#\n");
-            }
+            pending_twist[gpio] = 1;
+            pending_twist_time[gpio] = now;
         }
         log_switch_pressed(gpio, now);
     }
@@ -144,6 +162,23 @@ void switch_isr(uint gpio, uint32_t events){
         log_switch_released(gpio, now);
     }
     gpio_acknowledge_irq(gpio, events);
+}
+
+void check_twists(){
+    absolute_time_t now = get_absolute_time();
+    for (int i = 0; i <= NUM_SWITCH_INPUTS-1; i++){
+        int gpio = switch_inputs[i];
+        if (pending_twist[gpio]){
+            int64_t d = absolute_time_diff_us(pending_twist_time[gpio], now);
+            if (d > 5000){
+                pending_twist[gpio] = 0;
+                if (gpio_get(gpio) == 0){
+                    do_twist(gpio);
+                }
+            }
+        }
+    }
+    
 }
 
 int main(){
@@ -170,6 +205,8 @@ int main(){
         switch_last_pressed[pin] = t;
         switch_last_released[pin] = t;
         switch_blocked[pin] = 0;
+        pending_twist[pin] = 0;
+        pending_twist_time[pin] = t;
         gpio_init(pin);
         gpio_set_dir(pin, GPIO_IN);
         gpio_pull_up(pin);
@@ -272,6 +309,7 @@ int main(){
         if (mode == MODE_CONFIG){
             // do nothing
         }
+        check_twists();
         update_leds(ledStrip);
     }
 }

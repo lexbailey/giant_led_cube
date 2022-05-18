@@ -142,7 +142,7 @@ fn main() {
     });
 
     let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "localhost:9876".to_string(); // TODO load from tile
+    let addr = "192.168.1.34:9876".to_string(); // TODO load from tile
 
     let (sync_sender, sync_receiver) = channel();
 
@@ -213,6 +213,9 @@ fn main() {
                                 let args = parts.collect::<Vec<&str>>();
                                 match name.as_ref(){
                                     "anim" => {
+                                        if args.len() != 1{
+                                            println!("anim requires one parameter");
+                                        }
                                         let mut data = state.lock().unwrap();
                                         let t = cube::Twist::from_string(args[0]);
                                         match t{

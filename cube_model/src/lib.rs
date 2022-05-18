@@ -283,17 +283,18 @@ pub const ALL_TWISTS: [Twist; 18] = [
 
 impl Cube{
     pub fn new() -> Cube{
+        // top front left back right bottom
         let faces = [
             Face::new(Colors::White, [(BACK, 0,1), (RIGHT, 0,1), (FRONT, 0,1), (LEFT, 0,1)])
-            ,Face::new(Colors::Red, [(TOP, 6,1), (RIGHT, 0,3), (BOTTOM, 6,1), (LEFT, 8,-3)])
-            ,Face::new(Colors::Green, [(TOP, 0,3), (FRONT, 0,3), (BOTTOM, 8,-3), (BACK, 8,-3)])
-            ,Face::new(Colors::Orange, [(TOP, 2,-1), (LEFT, 0,3), (BOTTOM, 2,-1), (RIGHT, 8,-3)])
-            ,Face::new(Colors::Blue, [(TOP, 8,-3), (BACK, 0,3), (BOTTOM, 0,3), (FRONT, 8,-3)])
-            ,Face::new(Colors::Yellow, [(FRONT, 6,1), (RIGHT, 6,1), (BACK, 6,1), (LEFT, 6,1)])
+            ,Face::new(Colors::Red, [(TOP, 8,-1), (RIGHT, 6,-3), (BOTTOM, 8,-1), (LEFT, 2,3)])
+            ,Face::new(Colors::Green, [(TOP, 6,-3), (FRONT, 6,-3), (BOTTOM, 2,3), (BACK, 2,3)])
+            ,Face::new(Colors::Orange, [(TOP, 0,1), (LEFT, 6,-3), (BOTTOM, 0,1), (RIGHT, 2,3)])
+            ,Face::new(Colors::Blue, [(TOP, 2,3), (BACK, 6,-3), (BOTTOM, 6,-3), (FRONT, 2,3)])
+            ,Face::new(Colors::Yellow, [(FRONT, 8,-1), (RIGHT, 8,-1), (BACK, 8,-1), (LEFT, 8,-1)])
             // Fake faces, for manipulating centres, colour doesn't matter, it's never seen and represents nothing
-            ,Face::new(Colors::White, [(LEFT, 7,-3), (TOP, 3,1), (RIGHT, 1,3), (BOTTOM, 3,1)])
-            ,Face::new(Colors::White, [(BACK, 7,-3), (TOP, 1,3), (FRONT, 1,3), (BOTTOM, 7,-3)])
-            ,Face::new(Colors::White, [(LEFT, 3,1), (FRONT, 3,1), (RIGHT, 3,1), (BACK, 3,1)])
+            ,Face::new(Colors::White, [(LEFT, 1,3), (TOP, 5,-1), (RIGHT, 7,-3), (BOTTOM, 5,-1)])
+            ,Face::new(Colors::White, [(BACK, 1,3), (TOP, 7,-3), (FRONT, 7,-3), (BOTTOM, 1,3)])
+            ,Face::new(Colors::White, [(LEFT, 5,-1), (FRONT, 5,-1), (RIGHT, 5,-1), (BACK, 5,-1)])
         ];
         Cube{faces:faces}
     }
@@ -344,7 +345,12 @@ impl Cube{
             let (adj, doffset, dstep) = self.faces[face].adjacent[i];
             let (next, soffset, sstep) = self.faces[face].adjacent[((((i as isize) + if reverse {1} else {-1})+4)%4)as usize];
             let subs = self.faces[next].subfaces;
-            let edge_anim = self.faces[adj].copy_from(subs, doffset, dstep, soffset, sstep);
+            let edge_anim = if !reverse {
+                self.faces[adj].copy_from(subs, doffset, dstep, soffset, sstep)
+            }
+            else {
+                self.faces[adj].copy_from(subs, doffset+(dstep*2), -dstep, soffset+(sstep*2), -sstep)
+            };
             intermediates[0].faces[adj].subfaces = edge_anim[0];
             intermediates[1].faces[adj].subfaces = edge_anim[0];
             intermediates[2].faces[adj].subfaces = edge_anim[1];
@@ -461,11 +467,14 @@ mod tests {
     #[test]
     fn twist_animation() {
         let mut cube = Cube::new();
-        let anim = cube.twist(Twist::from_string("t").unwrap());
-        println!("{}\n", anim[0].simple_string());
-        println!("{}\n", anim[1].simple_string());
-        println!("{}\n", anim[2].simple_string());
-        assert_eq!(anim[0].simple_string(), "".to_string());
+        let anim = cube.twist(Twist::from_string("u").unwrap());
+        assert_eq!(anim[0].simple_string(), "Top:\nWWW\nWWW\nWWW\nFront:\nRRB\nRRR\nRRR\nLeft:\nGGR\nGGG\nGGG\nBack:\nOOG\nOOO\nOOO\nRight:\nBBO\nBBB\nBBB\nBottom:\nYYY\nYYY\nYYY".to_string());
+        assert_eq!(anim[1].simple_string(), "Top:\nWWW\nWWW\nWWW\nFront:\nRRB\nRRR\nRRR\nLeft:\nGGR\nGGG\nGGG\nBack:\nOOG\nOOO\nOOO\nRight:\nBBO\nBBB\nBBB\nBottom:\nYYY\nYYY\nYYY".to_string());
+        assert_eq!(anim[2].simple_string(), "Top:\nWWW\nWWW\nWWW\nFront:\nRBB\nRRR\nRRR\nLeft:\nGRR\nGGG\nGGG\nBack:\nOGG\nOOO\nOOO\nRight:\nBOO\nBBB\nBBB\nBottom:\nYYY\nYYY\nYYY".to_string());
+        let anim = cube.twist(Twist::from_string("f'").unwrap());
+        assert_eq!(anim[0].simple_string(), "Top:\nWWW\nWWW\nWWO\nFront:\nBBB\nRRR\nRRR\nLeft:\nRRW\nGGR\nGGG\nBack:\nGGG\nOOO\nOOO\nRight:\nBOO\nBBB\nYBB\nBottom:\nYYY\nYYY\nYYG".to_string());
+        assert_eq!(anim[1].simple_string(), "Top:\nWWW\nWWW\nWWO\nFront:\nBBR\nBRR\nRRR\nLeft:\nRRW\nGGR\nGGG\nBack:\nGGG\nOOO\nOOO\nRight:\nBOO\nBBB\nYBB\nBottom:\nYYY\nYYY\nYYG".to_string());
+        assert_eq!(anim[2].simple_string(), "Top:\nWWW\nWWW\nWOB\nFront:\nBBR\nBRR\nRRR\nLeft:\nRRW\nGGW\nGGR\nBack:\nGGG\nOOO\nOOO\nRight:\nBOO\nYBB\nYBB\nBottom:\nYYY\nYYY\nYGG".to_string());
     }
 
     #[cfg(not(feature="without_std"))]

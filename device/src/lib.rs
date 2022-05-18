@@ -62,11 +62,14 @@ pub extern "C" fn update_from_string(cube: *mut Cube, s: *const u8) {
 }
 
 #[no_mangle]
-pub extern "C" fn twist_cube(cube: *mut Cube, s: *const u8, l: u32){
+pub extern "C" fn twist_cube(cube: *mut Cube, s: *const u8, l: u32, f0: *mut Cube, f1: *mut Cube, f2: *mut Cube){
     unsafe{
         let t = &str::from_utf8(slice::from_raw_parts(s, l as usize)).unwrap();
         if let Ok(t) = Twist::from_string(t){
-            (*cube).twist(t);
+            let frames =(*cube).twist(t);
+            *f0 = frames[0];
+            *f1 = frames[1];
+            *f2 = frames[2];
         }
     }
 }
