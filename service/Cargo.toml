@@ -5,6 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+debug_device_stream = []
+
 [dependencies]
 clap = { version = "3.1.5", features = ["derive"] }
 pest = "2.0"
@@ -19,3 +22,4 @@ rodio = "0.15.0"
 rand = "0.8.5"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 chrono = "0.4"
+tee_readwrite = "0.1.0"

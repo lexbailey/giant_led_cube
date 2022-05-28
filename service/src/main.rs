@@ -378,6 +378,8 @@ fn main() {
         }
     };
 
+    persist_config(&config, &args.config);
+
     let (sender, receiver) = channel::<Event>();
 
     let net_sender = sender.clone();
@@ -389,9 +391,15 @@ fn main() {
     let (datapoints_sender, datapoints_receiver) = sync_channel(10);
     let datapoints_thread = handle_datapoints(datapoints_receiver, config.datapoint_secret.clone());
 
-    let mut device = serialport::new(&device_name, 115200).open().expect("Failed to open cube device serial port.");
+    let mut device = serialport::new(&device_name, 115200).timeout(Duration::from_secs(1)).open().expect("Failed to open cube device serial port.");
 
     let mut device_write = device.try_clone().expect("Failed to split serial connection into reader and writer, unsupported platform??");
+
+    #[cfg(feature="debug_device_stream")]
+    {
+        use tee_readwrite::TeeWriter;
+        let mut device_write = TeeWriter::new(device_write, std::io::stdout());
+    }
 
     let device_thread = thread::spawn(move||{
         let _ignored = device.set_timeout(Duration::from_secs(10));
@@ -400,7 +408,7 @@ fn main() {
         let mut twist_id: [u8;2] = [0,0];
         let mut twist_pos = 0;
         #[derive(Debug)]
-        enum Mode {Normal, ParseNum, ParseTwist}
+        enum Mode {Normal, ParseNum, ParseTwist, Debugmsg}
         use Mode::*;
         let mut mode = Normal;
         loop{
@@ -462,7 +470,18 @@ fn main() {
                                         mode = Normal; // malformed, ignore
                                     }
                                 }
-
+                                ,(Normal, b'?') => {
+                                    mode = Debugmsg;
+                                }
+                                ,(Debugmsg, c) => {
+                                    if c == b';'{
+                                        mode = Normal;
+                                        println!("\n");
+                                    }
+                                    else{
+                                         print!("{}", String::from_utf8_lossy(&[c]));
+                                    }
+                                }
                                 ,(Normal, _c) => {} //unknown char
                             }
                             Ok(())
@@ -527,7 +546,7 @@ fn main() {
     let sound_thread = std::thread::spawn(move||{
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sound_files: Vec<&[u8]> = include!("sounds.rs");
-        let sounds: Vec<Buffered<_>> = (1..=11).map(|n|{
+        let sounds: Vec<Buffered<_>> = (0..11).map(|n|{
             let file = BufReader::new(Cursor::new(sound_files[n]));
             Decoder::new(file).unwrap().buffered()
         }).collect();
