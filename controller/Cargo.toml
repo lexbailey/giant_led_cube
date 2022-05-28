@@ -25,6 +25,7 @@ cube_model = {path="../cube_model"}
 plain_authentic_commands = { path="../plain_authentic_commands" }
 rustyline = { version="9.1.2", optional=true }
 fontdue = {version="0.7.2", optional=true}
+game_timer = { path="../game_timer" }
 
 [profile.release]
 debug=true

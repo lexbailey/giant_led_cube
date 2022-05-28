@@ -395,6 +395,7 @@ version = "0.1.0"
 dependencies = [
  "cube_model",
  "fontdue",
+ "game_timer",
  "gl",
  "glutin",
  "plain_authentic_commands",

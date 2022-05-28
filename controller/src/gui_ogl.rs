@@ -3,6 +3,7 @@ extern crate glutin;
 
 use glutin::dpi::PhysicalPosition;
 use glutin::event::{ElementState, WindowEvent, MouseButton};
+use game_timer::TimerState;
 
 mod affine;
 use gl::types::*;
@@ -523,12 +524,18 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             };
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
             black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
-            data.test_time = Instant::now() - data.test_start;
+            let now = Instant::now();
 
-            let timer_msg = &match 0 {
-                _ => {format!("{:.03}", data.test_time.as_secs_f64())}
+            let timer_msg = if !state.timer_state.is_started() {
+                "Press start".to_string()
+            }
+            else if state.timer_state.is_inspecting(Some(now)) {
+                format!("Inspection: {}s", 15 - state.timer_state.inspection_so_far(Some(now)).as_secs())
+            }
+            else{
+                format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
             };
-            text(timer_msg, -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+            text(&timer_msg, -250.0, 100.0, 170.0, (1.0,1.0,1.0));
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
                 let hover = button.render(&gfx, &global_transform, &win_pix_transform);
@@ -629,7 +636,6 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                     ,GameEnd() => { println!("game end"); }
                     ,Connected(b) => { println!("connected: {}", b); }
                     ,MissingConnection() => { println!("missing connection"); }
-                    ,TimerState(sync_time, state) => { println!("Gui received timer sync data at {:?}, data is: {:?}", sync_time, state); }
                 }
             }
             ,_ => ()

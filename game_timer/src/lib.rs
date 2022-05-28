@@ -38,8 +38,11 @@ impl TimerState{
         self.started.map(|i| format!("{:?}", i))
     }
 
-    pub fn is_inspecting(&self) -> bool {
-        self.started.is_some() && self.inspection_end.is_none()
+    pub fn is_inspecting(&self, t: Option<Instant>) -> bool {
+        match t {
+            None => {self.started.is_some() && self.inspection_end.is_none()}
+            Some(t) => {self.started.is_some() && self.inspection_end.is_none() && t - self.started.unwrap() < Duration::new(15,0)}
+        }
     }
 
     pub fn is_started(&self) -> bool {
@@ -67,7 +70,7 @@ impl TimerState{
     }
 
     pub fn twist(&mut self) -> bool {
-        if self.is_inspecting(){
+        if self.is_inspecting(None){
             self.inspection_end = Some(Instant::now());
             true
         }
@@ -108,6 +111,62 @@ impl TimerState{
         }
     }
 
+    pub fn inspection_so_far(&self, at: Option<Instant>) -> Duration {
+        if !self.is_started(){
+            Duration::new(0,0)
+        }
+        else{
+            if self.is_inspecting(at){
+                let t = Instant::now() - self.started.unwrap();
+                if t > Duration::new(15,0){
+                    Duration::new(15,0)
+                }
+                else{
+                    t
+                }
+            }
+            else{
+                self.inspection_end.unwrap() - self.started.unwrap()
+            }
+        }
+    }
+
+    pub fn effective_inspection_end(&self) -> Option<Instant>{
+        self.inspection_end.and_then(|t|{
+            let s = self.started.unwrap();
+            if t-s > Duration::new(15,0) {
+                Some(s + Duration::new(15,0))
+            }
+            else{
+                Some(t)
+            }
+        })
+    }
+
+    pub fn solve_so_far(&self) -> Duration {
+        let at = Instant::now();
+        if self.is_ended() {
+            self.ended.unwrap() - self.effective_inspection_end().unwrap()
+        }
+        else if !self.is_started(){
+            Duration::new(0,0)
+        }
+        else{
+            if self.is_inspecting(Some(at)){
+                Duration::new(0,0)
+            }
+            else{
+                match self.effective_inspection_end() {
+                    Some(e) => {Instant::now() - e}
+                    ,None => {
+                        let start = self.started.unwrap();
+                        at - start - Duration::new(15,0)
+                    }
+                }
+            }
+        }
+    }
+
     pub fn serialise(&self) -> (String, String, String){
         match self.started{
             None => {("X".to_string(), "X".to_string(), "X".to_string())}
@@ -139,14 +198,36 @@ impl TimerState{
         }
     }
 
-    pub fn deserialise(start: Instant, durs: (String, String, String)) -> Result<Self, ()>{
+    fn deserialise_raw(start: Instant, durs: (Option<Duration>, Option<Duration>, Option<Duration>)) -> Result<Self, ()>{
         let (s, i, e) = durs;
         let add_start = |d|Some(start+d);
         Ok(TimerState{
-            started: Self::str_to_opt_dir(s)?.and_then(add_start)
-            ,inspection_end: Self::str_to_opt_dir(i)?.and_then(add_start)
-            ,ended: Self::str_to_opt_dir(e)?.and_then(add_start)
+            started: s.and_then(add_start)
+            ,inspection_end: i.and_then(add_start)
+            ,ended: e.and_then(add_start)
         })
+    }
+
+    pub fn deserialise(start: Instant, durs: (String, String, String)) -> Result<Self, ()>{
+        let (s, i, e) = durs;
+        Self::deserialise_raw(start, (
+            Self::str_to_opt_dir(s)?
+            ,Self::str_to_opt_dir(i)?
+            ,Self::str_to_opt_dir(e)?
+        ))
+    }
+
+    pub fn deserialise_now_ish(durs: (String, String, String)) -> Result<Self, ()>{
+        let t = Instant::now();
+        let (s, i, e) = durs;
+        let s = Self::str_to_opt_dir(s)?;
+        let i = Self::str_to_opt_dir(i)?;
+        let e = Self::str_to_opt_dir(e)?;
+        let mut max = Duration::new(0,0);
+        if let Some(t) = s {if t > max {max = t;}}
+        if let Some(t) = i {if t > max {max = t;}}
+        if let Some(t) = e {if t > max {max = t;}}
+        Self::deserialise_raw(t - max, (s,i,e))
     }
 }
 

@@ -1,6 +1,8 @@
 use cube_model as cube;
 use cube::{Cube, Output, OutputMap5Faces, Twist};
 
+use game_timer::TimerState;
+
 use std::str;
 use std::time::{Instant,Duration};
 use rand::Rng;
@@ -198,7 +200,7 @@ pub struct ClientState {
     ,pub input_detect_state: InputDetectState
     ,pub led_detect_state: LEDDetectState
     ,pub last_timer_update: Instant
-    ,pub timer_state: (Option<Duration>, Option<Duration>, Option<Duration>)
+    ,pub timer_state: TimerState
 }
 
 impl ClientState {
@@ -208,7 +210,7 @@ impl ClientState {
             ,input_detect_state: InputDetectState::new()
             ,led_detect_state: LEDDetectState::new()
             ,last_timer_update: Instant::now()
-            ,timer_state: (None, None, None)
+            ,timer_state: TimerState::default()
         }
     }
 }
@@ -267,7 +269,6 @@ pub enum ToGUI {
     ,GameEnd()
     ,Connected(bool)
     ,MissingConnection()
-    ,TimerState(Instant, (Option<Duration>, Option<Duration>, Option<Duration>))
 }
 
 #[derive(Debug)]
@@ -518,13 +519,13 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                 let mut state = state.lock().unwrap();
                                                 state.last_timer_update = now;
                                                 let dur = |d|{u64::from_str(d).and_then(|d|Ok(Duration::from_millis(d))).ok()};
-                                                state.timer_state = (
-                                                   dur(&args[0])
-                                                   ,dur(&args[1])
-                                                   ,dur(&args[2])
-                                                );
+                                                if let Ok(new_time) = TimerState::deserialise_now_ish(
+                                                    (args[0].clone(), args[1].clone(), args[2].clone())
+                                                ){
+                                                    state.timer_state = new_time;
+                                                }
                                                 println!("{:?}, {:?}", state.last_timer_update, state.timer_state);
-                                                to_gui_sender.send(ToGUI::TimerState(state.last_timer_update, state.timer_state));
+                                                to_gui_sender.send(ToGUI::StateUpdate());
                                             }
                                         }
                                         ,r=>{
@@ -618,14 +619,18 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut twist = Twist::from_string("F").unwrap();
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
-                                //for _ in 0..30{
-                                for _ in 0..1{
-                                    while twist.face == last_twist.face && twist.reverse != last_twist.reverse{
+                                for _ in 0..30{
+                                //for _ in 0..1{
+                                    loop {
                                         twist = Twist{
                                             face: rng.gen_range(0..6)
                                             ,reverse: rng.gen_bool(0.5)
+                                        };
+                                        if !(twist.face == last_twist.face) && (twist.reverse != last_twist.reverse) {
+                                            break
                                         }
                                     }
+                                    println!("Twist: {:?}", twist);
                                     last_twist = twist;
                                     state.cube.twist(twist);
                                 }

@@ -178,6 +178,7 @@ fn main() {
                                 
                             }
                             ,GameEnd() => {println!("TODO game end");}
+                            ,TimerState(t, durs) => {println!("TODO timers");}
                         }
                     }
                     ,UserInput(command) => {
