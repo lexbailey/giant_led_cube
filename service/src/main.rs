@@ -16,6 +16,8 @@ use std::time::{Instant, Duration};
 use std::cmp::min;
 use std::fmt::{self,Display};
 
+use game_timer::TimerState;
+
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
@@ -88,118 +90,6 @@ enum EvStreamError {
     Sender(#[from] std::sync::mpsc::SendError<Event>)
 }
 
-#[derive(Default, Debug)]
-struct GameState{
-    started: Option<Instant>
-    ,inspection_end: Option<Instant>
-    ,ended: Option<Instant>
-}
-
-impl Display for GameState{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self.started{
-            Some(s) => "t0"
-            ,None => "?"
-        };
-        let i = match (self.started, self.inspection_end) {
-            (Some(start), Some(end)) => {format!("{:#?}", end-start)}
-            ,_=>{"?".to_string()}
-        };
-        let e = match (self.started, self.ended) {
-            (Some(start), Some(end)) => {format!("{:#?}", end-start)}
-            ,_=>{"?".to_string()}
-        };
-        write!(f, "(s:{}, i:{}, e:{})", s,i,e)
-    }
-}
-
-impl GameState{
-    fn reset(&mut self) {
-        self.started = None;
-        self.inspection_end = None;
-        self.ended = None;
-    }
-
-    fn game_id(&self) -> Option<String> {
-        self.started.map(|i| format!("{:?}", i))
-    }
-
-    fn is_inspecting(&self) -> bool {
-        self.started.is_some() && self.inspection_end.is_none()
-    }
-
-    fn is_started(&self) -> bool {
-        self.started.is_some()
-    }
-
-    fn is_ended(&self) -> bool {
-        self.ended.is_some()
-    }
-
-    fn can_start(&self) -> bool {
-        self.is_ended() || !self.is_started()
-    }
-
-    fn recorded_time(&self) -> Option<Duration>{
-        match (self.started, self.inspection_end, self.ended) {
-            (Some(start), Some(inspect_end), Some(end)) => {
-                const FIFTEEN: Duration = Duration::from_secs(15);
-                Some((end - start)- min(inspect_end - start, FIFTEEN))
-            }
-            ,_=>{
-                None
-            }
-        }
-    }
-
-    fn twist(&mut self) -> bool {
-        if self.is_inspecting(){
-            self.inspection_end = Some(Instant::now());
-            true
-        }
-        else {
-            false
-        }
-    }
-
-    fn start(&mut self) -> bool {
-        if self.can_start() {
-            self.started = Some(Instant::now());
-            self.inspection_end = None;
-            self.ended = None;
-            true
-        }
-        else {
-            false
-        }
-    }
-
-    fn solved(&mut self) {
-        self.ended = Some(Instant::now());
-    }
-
-    fn serialise(&self) -> (String, String, String){
-        match self.started{
-            None => {("X".to_string(), "X".to_string(), "X".to_string())}
-            Some(start) => {
-                match self.inspection_end {
-                    None => {("0".to_string(), "X".to_string(), "X".to_string())}
-                    Some(inspect) => {
-                        let d_in = format!("{}", (inspect - start).as_millis());
-                        match self.ended{
-                            None => { ("0".to_string(),d_in,"X".to_string()) }
-                            Some(end) => {
-                                let d_tot = format!("{}", (end - start).as_millis());
-                                ("0".to_string(), d_in, d_tot)
-                             }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Datapoint {
@@ -215,7 +105,7 @@ impl Datapoint {
         Local::now().to_rfc3339()
     }
 
-    fn start_timed_game(game_state: &GameState) -> Datapoint {
+    fn start_timed_game(game_state: &TimerState) -> Datapoint {
         let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
         Datapoint {
             dataset_name: "start_timed_name".to_string(),
@@ -227,9 +117,9 @@ impl Datapoint {
         }
     }
 
-    fn twist(game_state: &GameState, twist: &Twist) -> Datapoint {
+    fn twist(game_state: &TimerState, twist: &Twist) -> Datapoint {
         let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
-        let game_duration_so_far = Instant::now() - game_state.started.unwrap_or_else(|| Instant::now());
+        let game_duration_so_far = game_state.duration_so_far();
         Datapoint {
             dataset_name: "twist".to_string(),
             timestamp: Datapoint::timestamp(),
@@ -243,7 +133,7 @@ impl Datapoint {
         }
     }
 
-    fn solved(game_state: &GameState) -> Datapoint {
+    fn solved(game_state: &TimerState) -> Datapoint {
         let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
         let game_duration = game_state.recorded_time().unwrap_or(Duration::MAX);
         Datapoint {
@@ -666,7 +556,7 @@ fn main() {
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
 
-    let mut game_state = GameState::default();
+    let mut game_state = TimerState::default();
 
 
     for event in receiver.iter(){
@@ -758,20 +648,22 @@ fn main() {
                         datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
                     }
                     ,DeviceEvent::Solved() => {
-                        game_state.solved();
+                        let is_win = game_state.solved();
                         if let Some(sender) = gui_sender.as_ref(){
                             sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                         }
-                        sound_sender.send(Sound::Win());
-                        match game_state.recorded_time(){
-                            Some(time) => {
-                                if let Some(sender) = gui_sender.as_ref(){
-                                    sender.send(StreamEvent::ReportTime(time));
+                        if is_win{
+                            sound_sender.send(Sound::Win());
+                            match game_state.recorded_time(){
+                                Some(time) => {
+                                    if let Some(sender) = gui_sender.as_ref(){
+                                        sender.send(StreamEvent::ReportTime(time));
+                                    }
                                 }
+                                ,_=>{}
                             }
-                            ,_=>{}
+                            datapoints_sender.try_send(Datapoint::solved(&game_state));
                         }
-                        datapoints_sender.try_send(Datapoint::solved(&game_state));
                     }
                     ,_=>{}
                 }

@@ -24,9 +24,11 @@ use cube_model as cube;
 use cube::Cube;
 
 use std::sync::{Arc,Mutex};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, Receiver};
 
 use fontdue::Font;
+
+use std::thread;
 
 shader_struct!{
     CubeShader
@@ -161,7 +163,7 @@ struct RenderData{
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
     ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
-    ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<()>>>
+    ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<ToGUI>>>
     ,font: Font
     ,texture: u32
     ,font_scale: f32
@@ -173,7 +175,7 @@ struct RenderData{
 }
 
 fn init_render_data() -> RenderData{
-    let events_loop = glutin::event_loop::EventLoop::new();
+    let events_loop = glutin::event_loop::EventLoop::with_user_event();
     let window = glutin::window::WindowBuilder::new()
         .with_title("Giant cube")
         .with_inner_size(glutin::dpi::PhysicalSize::new(1120,630));
@@ -412,7 +414,7 @@ impl Button{
     }
 }
 
-fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<FromGUI>){
+fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<FromGUI>, receiver: Receiver<ToGUI>){
 
     let mut data = DataModel{
         d:0.0
@@ -523,7 +525,10 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
             data.test_time = Instant::now() - data.test_start;
 
-            text(&format!("{:.03}", data.test_time.as_secs_f64()), -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+            let timer_msg = &match 0 {
+                _ => {format!("{:.03}", data.test_time.as_secs_f64())}
+            };
+            text(timer_msg, -250.0, 100.0, 170.0, (1.0,1.0,1.0));
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
                 let hover = button.render(&gfx, &global_transform, &win_pix_transform);
@@ -580,8 +585,16 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
 
     use glutin::event::{Event, WindowEvent};
     use glutin::event_loop::ControlFlow;
-    let events_loop = gfx.events_loop.take();
-    events_loop.unwrap().run(move |event, _win_target, cf|
+    let events_loop = gfx.events_loop.take().unwrap();
+
+    let proxy = events_loop.create_proxy();
+
+    let _client_event_thread = thread::spawn(move||{
+        for ev in receiver{
+            proxy.send_event(ev);
+        }
+    });
+    events_loop.run(move |event, _win_target, cf|
         match event {
             Event::WindowEvent{ event: ev,..} => {
                 match ev {
@@ -609,6 +622,16 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 draw(&mut data, &mut gfx, &state, &sender);
                 *cf = ControlFlow::WaitUntil(last_frame_start+frame_duration); last_frame_start = start;
             }
+            ,Event::UserEvent(client_ev) => {
+                use ToGUI::*;
+                match client_ev {
+                    StateUpdate() => { println!("state update"); }
+                    ,GameEnd() => { println!("game end"); }
+                    ,Connected(b) => { println!("connected: {}", b); }
+                    ,MissingConnection() => { println!("missing connection"); }
+                    ,TimerState(sync_time, state) => { println!("Gui received timer sync data at {:?}, data is: {:?}", sync_time, state); }
+                }
+            }
             ,_ => ()
         }
     );
@@ -618,13 +641,13 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
 fn main() {
     let gfx = init_render_data();
 
-    let (state, sender, _c_receiver, _client) = start_client();
+    let (state, sender, receiver, _client) = start_client();
 
     let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "localhost:9876".to_string(); // TODO load from tile
+    let addr = "192.168.1.34:9876".to_string(); // TODO load from tile
 
     use client::FromGUI::*;
     sender.send(Connect(secret, addr));
     sender.send(SetState(Cube::new()));
-    ui_loop(gfx, state, sender);
+    ui_loop(gfx, state, sender, receiver);
 }

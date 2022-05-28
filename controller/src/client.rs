@@ -267,6 +267,7 @@ pub enum ToGUI {
     ,GameEnd()
     ,Connected(bool)
     ,MissingConnection()
+    ,TimerState(Instant, (Option<Duration>, Option<Duration>, Option<Duration>))
 }
 
 #[derive(Debug)]
@@ -523,10 +524,8 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                    ,dur(&args[2])
                                                 );
                                                 println!("{:?}, {:?}", state.last_timer_update, state.timer_state);
+                                                to_gui_sender.send(ToGUI::TimerState(state.last_timer_update, state.timer_state));
                                             }
-                                        }
-                                        ,"solve_time" => {
-                                            println!("{:?}", args[0]);
                                         }
                                         ,r=>{
                                             eprintln!("TODO handle response: {}", r);
@@ -619,8 +618,9 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut twist = Twist::from_string("F").unwrap();
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
-                                for _ in 0..30{
-                                    while twist == last_twist{
+                                //for _ in 0..30{
+                                for _ in 0..1{
+                                    while twist.face == last_twist.face && twist.reverse != last_twist.reverse{
                                         twist = Twist{
                                             face: rng.gen_range(0..6)
                                             ,reverse: rng.gen_bool(0.5)

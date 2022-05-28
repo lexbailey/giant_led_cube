@@ -46,7 +46,7 @@ pub extern "C" fn get_data(cube: *mut Cube, mapping: *const OutputMap5Faces, dat
                     ,Colors::Blue => 0x0000ff
                     ,Colors::White => 0xffffff
                     ,Colors::Yellow => 0xffff00
-                    ,Colors::Orange => 0xff3000
+                    ,Colors::Orange => 0xff6000
                     ,Colors::Blank => 0x0
                 }
             }

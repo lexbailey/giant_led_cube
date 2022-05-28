@@ -6,5 +6,6 @@ members = [
     "controller",
     "device",
     "service",
+    "game_timer",
 ]
 

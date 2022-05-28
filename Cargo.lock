@@ -824,6 +824,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "game_timer"
+version = "0.1.0"
+
+[[package]]
 name = "generic-array"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2242,6 +2246,7 @@ dependencies = [
  "chrono",
  "clap 3.1.5",
  "cube_model",
+ "game_timer",
  "pest",
  "plain_authentic_commands",
  "rand",
