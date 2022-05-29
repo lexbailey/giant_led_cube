@@ -701,6 +701,7 @@ fn main() {
                             }
                         }
                         sound_sender.send(Sound::Twist());
+                        cube.twist(twist);
                         datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
                     }
                     ,DeviceEvent::Solved() => {
