@@ -418,6 +418,17 @@ impl Button{
     }
 }
 
+fn format_time(d:Duration) -> String {
+    let total = d.as_secs_f64();
+    let mins = (total / 60.0).floor();
+    if mins < 1.0 {
+        format!("{:.3}s", total)
+    }
+    else {
+        format!("{}:{:06.3}", mins, total - (mins * 60.0))
+    }
+}
+
 fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<FromGUI>, receiver: Receiver<ToGUI>){
 
     let mut data = DataModel{
@@ -539,19 +550,19 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 if state.timer_state.is_ended() {
                     let flash = (data.frames % 30) > 10;
                     if flash {
-                        format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
+                        format_time(state.timer_state.solve_so_far())
                     }
                     else {
                         "".to_string()
                     }
                 }
                 else {
-                    format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
+                    format_time(state.timer_state.solve_so_far())
                 }
             };
             black_text(&timer_msg, -1920.0/2.0, (-1080.0/2.0)+250.0, 170.0);
             if state.record_time > 0 {
-                black_text(&format!("Current\nRecord:\n{:.03}s", Duration::from_millis(state.record_time.try_into().unwrap_or(0)).as_secs_f64()), 1920.0/2.0 - 400.0, 1080.0/2.0, 100.0);
+                black_text(&format!("Current\nRecord:\n{}", format_time(Duration::from_millis(state.record_time.try_into().unwrap_or(0)))), 1920.0/2.0 - 500.0, 1080.0/2.0, 100.0);
             }
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
