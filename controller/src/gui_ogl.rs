@@ -5,6 +5,8 @@ use glutin::dpi::PhysicalPosition;
 use glutin::event::{ElementState, WindowEvent, MouseButton};
 use game_timer::TimerState;
 
+use std::collections::HashMap;
+
 mod affine;
 use gl::types::*;
 use std::mem;
@@ -76,13 +78,14 @@ shader_struct!{
         uniform mat4 u_image_geom;
         uniform mat4 u_translate;
         uniform mat4 u_scale;
+        uniform vec4 u_glyph_select;
 
         out vec2 texcoord;
 
         void main()
         {
             gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate * u_global_transform * u_pix_transform;
-            texcoord = texcoord_in;
+            texcoord = (u_glyph_select.xy + (texcoord_in * u_glyph_select.zw));
         }
         "#
     ,r#"
@@ -97,7 +100,7 @@ shader_struct!{
         void main()
         {
            FragColor =
-             min(1.0, (u_color.a * texture(u_texture, texcoord).r) + (1.0-u_color.a))
+             min(1.0, (u_color.a * texture(u_texture, texcoord / textureSize(u_texture, 0)).r) + (1.0-u_color.a))
              *
              vec4(u_color.rgb, 1.0)
            ;
@@ -111,6 +114,7 @@ shader_struct!{
         u_global_transform: UniformMat4,
         u_pix_transform: UniformMat4,
         u_scale: UniformMat4,
+        u_glyph_select: UniformVec4,
     }
 }
 
@@ -128,6 +132,7 @@ struct DataModel{
 use glutin::ContextWrapper;
 use glutin::PossiblyCurrent;
 
+#[derive(Clone)]
 struct Button{
     x: f32
     ,y: f32
@@ -154,6 +159,33 @@ impl Button {
     }
 }
 
+struct GlyphSheet{
+    locations: HashMap<fontdue::layout::GlyphRasterConfig, (usize, usize, usize, usize)>
+    ,bitmap: Vec<u8>
+    ,pos_x: usize
+    ,pos_y: usize
+    ,max_used_y: usize
+    ,width: usize
+    ,height: usize
+}
+
+impl GlyphSheet{
+    fn new(tex_size: usize) -> Self{
+        let bitmap_size = tex_size * tex_size;
+        let mut bitmap = Vec::with_capacity(bitmap_size);
+        bitmap.resize(bitmap_size, 0);
+        GlyphSheet{
+            locations: HashMap::new()
+            ,bitmap
+            ,pos_x: 0
+            ,pos_y: 0
+            ,max_used_y: 0
+            ,width: tex_size
+            ,height: tex_size
+        }
+    }
+}
+
 struct RenderData{
     shader: CubeShader
     ,image_shader: ImageShader
@@ -173,6 +205,15 @@ struct RenderData{
     ,pressed: bool
     ,released: bool
     ,buttons: RefCell<Vec<Button>>
+    ,font_cache: RefCell<GlyphSheet>
+/*
+    ,font_cache: HashMap<fontdue::layout::GlyphRasterConfig, (usize, usize, usize, usize)>
+    ,font_bitmap: Vec<u8>
+    ,fmap_pos_x: usize
+    ,fmap_pos_y: usize
+    ,fmap_max_used_y: usize
+    ,fmap_width: usize
+    ,fmap_height: usize*/
 }
 
 fn init_render_data() -> RenderData{
@@ -295,6 +336,9 @@ fn init_render_data() -> RenderData{
         let scramble_button = Button::new(left + 10.0, 240.0, 540.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
         let end_button = Button::new(left + 10.0, 100.0, 540.0,110.0, "Reset Cube".to_string(), "reset".to_string(), 80.0);
 
+        let mut tex_size: i32 = 0;
+        gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut tex_size as *mut i32);
+        let tex_size = std::cmp::min(tex_size, 1000) as usize; //shouldn't need more than this
         RenderData{
             shader: cube_shader
             ,image_shader: image_shader
@@ -314,6 +358,7 @@ fn init_render_data() -> RenderData{
             ,buttons: RefCell::new(vec![scramble_button, end_button])
             ,pressed: false
             ,released: false
+            ,font_cache: RefCell::new(GlyphSheet::new(tex_size))
         }
     };
     gfx_objs
@@ -354,12 +399,43 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
         let mut l: layout::Layout<()> = layout::Layout::new(layout::CoordinateSystem::PositiveYUp);
         l.append(&[&gfx.font], &layout::TextStyle::new(s, pt, 0));
         for c in l.glyphs(){
-            let (metrics, bitmap) = gfx.font.rasterize_config(c.key);
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, c.width as i32, c.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, bitmap.as_ptr() as *const c_void);
+            let mut glyphs = gfx.font_cache.borrow_mut();
+            let mut location: Option<(usize, usize, usize, usize)> = glyphs.locations.get(&c.key).cloned();
+            if location.is_none() {
+                let (metrics, bitmap) = gfx.font.rasterize_config(c.key);
+                // If this would overflow the line, go to the next line down
+                if glyphs.pos_x + metrics.width > glyphs.width{
+                    glyphs.pos_y = glyphs.max_used_y + 2;
+                    glyphs.pos_x = 0;
+                }
+                // Now we know where this character goes, cache the coords
+                let a_location = (glyphs.pos_x, glyphs.pos_y, metrics.width, metrics.height);
+                location = Some(a_location);
+                glyphs.locations.insert(c.key, a_location);
+                
+                glyphs.max_used_y = std::cmp::max(glyphs.max_used_y, glyphs.pos_y + metrics.height);
+
+                //println!("Cache-render {} at {},{} with size {},{}", c.parent, gfx.fmap_pos_x, gfx.fmap_pos_y, metrics.width, metrics.height);
+
+                // Copy the glyph bitmap to the main bitmap sheet
+                for y in 0..metrics.height{
+                    for x in 0..metrics.width{
+                        let p = bitmap[(y*metrics.width) + x];
+                        let t = ((glyphs.pos_y + y) * glyphs.width) + (glyphs.pos_x + x);
+                        glyphs.bitmap[t] = p;
+                    }
+                }
+
+                glyphs.pos_x += metrics.width + 1;
+                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as i32, glyphs.width as i32, glyphs.height as i32, 0, gl::RED, gl::UNSIGNED_BYTE, glyphs.bitmap.as_ptr() as *const c_void);
+            }
             let image_geom = Tf::scale(c.width as f32, c.height as f32, 0.0);
             let image_translate = Tf::translate(c.x + x, c.y + y,0.0) ;
             gfx.image_shader.u_image_geom.set(&image_geom.data);
             gfx.image_shader.u_translate.set(&image_translate.data);
+            if let Some((gx,gy,gw,gh)) = location{
+                gfx.image_shader.u_glyph_select.set(gx as f32, gy as f32, gw as f32, gh as f32);
+            }
             gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         }
     }
@@ -450,7 +526,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
     }
 
 
-    fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>, sender: &Sender<FromGUI>){
+    fn draw(data: &mut DataModel, mut gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>, sender: &Sender<FromGUI>){
         let state = state.lock().unwrap();
         let sz = gfx.window.window().inner_size();
         let ww = sz.width as f32;
@@ -530,10 +606,10 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 gl::DrawArrays(gl::LINE_LOOP, 0, 4);
             }
 
-            let text = |s, x, y, pt, col|{
-                render_text(&gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
+            let mut text = |s, x, y, pt, col|{
+                render_text(&mut gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
             };
-            let black_text = |s, x, y, pt|{
+            let mut black_text = |s, x, y, pt|{
                 text(s,x,y,pt,(0.0,0.0,0.0));
             };
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
