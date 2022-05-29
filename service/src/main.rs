@@ -43,6 +43,7 @@ struct CubeConfig{
     ,input_map: String
     ,secret: String
     ,datapoint_secret: String
+    ,top_score: u128
 }
 
 enum DeviceEvent{
@@ -57,11 +58,14 @@ enum StreamEvent{
     ,EOS()
     ,SyncTimers((String, String, String))
     ,ReportTime(Duration)
+    ,CubeState(Cube)
+    ,RecordState(u128)
 }
 
 enum ClientEvent{
     Connected(Sender<StreamEvent>)
     ,SetState(String)
+    ,GetState()
     ,StartDetectLED()
     ,StartDetectSwitches()
     ,UpdateLEDMap(String)
@@ -203,6 +207,9 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                                     write_stream.write(msg.as_bytes())?;
                                                 }
                                             }
+                                            ,"get_state" => {
+                                                sender.send(Event::Client(ClientEvent::GetState()));
+                                            }
                                             ,"detect" => {
                                                 if args.len() < 1{
                                                     let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
@@ -300,6 +307,16 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                 write_stream.write(msg.as_bytes())?;
                                 Ok(Loop)
                             }
+                            ,CubeState(cube) => {
+                                let msg = auth.construct_reply("cube_state", &vec![&cube.serialise()]);
+                                write_stream.write(msg.as_bytes())?;
+                                Ok(Loop)
+                            }
+                            ,RecordState(record) => {
+                                let msg = auth.construct_reply("record_time", &vec![&format!("{}", record)]);
+                                write_stream.write(msg.as_bytes())?;
+                                Ok(Loop)
+                            }
                         }
                     })();
                     match r {
@@ -346,6 +363,13 @@ fn persist_config(config: &CubeConfig, file: &str) {
     }
 }
 
+fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, record: u128){
+    if let Some(sender) = gui_sender {
+        sender.send(StreamEvent::CubeState(cube));
+        sender.send(StreamEvent::RecordState(record));
+    }
+}
+
 fn main() {
     println!("Cube service");
 
@@ -377,6 +401,7 @@ fn main() {
                     ,"input_map": "000102030405060708091011121314151617"
                     ,"secret": ""
                     ,"datapoint_secret": ""
+                    ,"top_score": 0
                 }"#
             ).unwrap()
         }
@@ -650,7 +675,10 @@ fn main() {
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
-                            // TODO sync state on connect: sender.send(StreamEvent::GUI(GUIEvent::SyncState(somethingsomething)));
+                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score);
+                        }
+                        ,ClientEvent::GetState() => {
+                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score);
                         }
                         ,ClientEvent::SetBrightness(b) => {
                             device_write.write(b"%")?;
@@ -687,6 +715,11 @@ fn main() {
                                 Some(time) => {
                                     if let Some(sender) = gui_sender.as_ref(){
                                         sender.send(StreamEvent::ReportTime(time));
+                                    }
+                                    let t = time.as_millis();
+                                    if t < config.top_score{
+                                        config.top_score = t;
+                                        persist_config(&config, &args.config);
                                     }
                                 }
                                 ,_=>{}
