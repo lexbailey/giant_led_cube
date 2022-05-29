@@ -580,6 +580,7 @@ fn main() {
             Decoder::new(file).unwrap().buffered()
         }).collect();
 
+        let win_sound = Decoder::new(BufReader::new(Cursor::new(include_bytes!("../../sounds/win.wav")))).unwrap().buffered();
 
         let mut rng = rand::thread_rng();
         for ev in sound_events.iter() {
@@ -589,8 +590,7 @@ fn main() {
                     stream_handle.play_raw(sounds[n].clone().convert_samples());
                 }
                 ,Sound::Win() => {
-                    // TODO load a win sound
-                    //stream_handle.play_raw(win_sound.clone().convert_samples());
+                    stream_handle.play_raw(win_sound.clone().convert_samples());
                 }
                 ,Sound::NoMoreSounds() => {
                     break;
