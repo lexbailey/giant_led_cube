@@ -675,7 +675,6 @@ fn main() {
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
-                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score);
                         }
                         ,ClientEvent::GetState() => {
                             send_state_to_client(gui_sender.as_ref(), cube, config.top_score);
