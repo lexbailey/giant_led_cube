@@ -68,6 +68,7 @@ enum ClientEvent{
     ,UpdateInputMap(String)
     ,Play()
     ,StartTimedGame()
+    ,CancelTimedGame()
     ,SetBrightness(u8)
 }
 
@@ -239,6 +240,9 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                             }
                                             ,"timed_start" => {
                                                 sender.send(Event::Client(ClientEvent::StartTimedGame()))?;
+                                            }
+                                            ,"cancel_timer" => {
+                                                sender.send(Event::Client(ClientEvent::CancelTimedGame()))?;
                                             }
                                             ,"set_brightness" => {
                                                 if args.len() != 1{
@@ -637,6 +641,12 @@ fn main() {
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
                             datapoints_sender.try_send(Datapoint::start_timed_game(&game_state));
+                        }
+                        ,ClientEvent::CancelTimedGame() => {
+                            game_state.reset();
+                            if let Some(sender) = gui_sender.as_ref(){
+                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                            }
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);

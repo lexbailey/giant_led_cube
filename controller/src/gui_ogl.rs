@@ -290,7 +290,10 @@ fn init_render_data() -> RenderData{
     
         let offset_subface = &((&affine::Transform::<f32>::scale(1.01,1.01,1.01)) * &offset) * (&affine::Transform::<f32>::scale(0.3,0.3,0.3));
 
-        let scramble_button = Button::new(-1920.0/2.0, 0.0, 390.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
+        let left = -1920.0/2.0;
+
+        let scramble_button = Button::new(left + 10.0, 240.0, 540.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
+        let end_button = Button::new(left + 10.0, 100.0, 540.0,110.0, "Reset Cube".to_string(), "reset".to_string(), 80.0);
 
         RenderData{
             shader: cube_shader
@@ -308,7 +311,7 @@ fn init_render_data() -> RenderData{
             ,font_scale: 1.0 // make this a config option??
             ,cur: PhysicalPosition{x:0.0,y:0.0}
             ,s_cur: PhysicalPosition{x:0.0,y:0.0}
-            ,buttons: RefCell::new(vec![scramble_button])
+            ,buttons: RefCell::new(vec![scramble_button, end_button])
             ,pressed: false
             ,released: false
         }
@@ -523,19 +526,30 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 text(s,x,y,pt,(0.0,0.0,0.0));
             };
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
-            black_text("⇩click to play⇩", -1920.0/2.0, 300.0, 70.0);
+            black_text("⇩click to play⇩", -1920.0/2.0, 350.0, 70.0);
             let now = Instant::now();
 
             let timer_msg = if !state.timer_state.is_started() {
-                "Press start".to_string()
+                "Ready to start".to_string()
             }
             else if state.timer_state.is_inspecting(Some(now)) {
                 format!("Inspection: {}s", 15 - state.timer_state.inspection_so_far(Some(now)).as_secs())
             }
             else{
-                format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
+                if state.timer_state.is_ended() {
+                    let flash = (data.frames % 30) > 10;
+                    if flash {
+                        format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
+                    }
+                    else {
+                        "".to_string()
+                    }
+                }
+                else {
+                    format!("{:.03}s", state.timer_state.solve_so_far().as_secs_f64())
+                }
             };
-            text(&timer_msg, -250.0, 100.0, 170.0, (1.0,1.0,1.0));
+            black_text(&timer_msg, -1920.0/2.0, (-1080.0/2.0)+250.0, 170.0);
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
                 let hover = button.render(&gfx, &global_transform, &win_pix_transform);
@@ -567,18 +581,18 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         "scramble" => {
                             sender.send(StartGame());
                         }
+                        ,"reset" => {
+                            sender.send(CancelTimer());
+                            sender.send(SetState(Cube::new()));
+                        }
                         ,_=>{}
                     }
                 }
             }
             gfx.pressed = false;
             gfx.released = false;
-
-
-
             // Cursor pos debug
             //black_text("X", gfx.s_cur.x as f32 -35.0, gfx.s_cur.y as f32+35.0, 70.0);
-            
         }
         gfx.window.swap_buffers().unwrap();
     }
@@ -650,7 +664,7 @@ fn main() {
     let (state, sender, receiver, _client) = start_client();
 
     let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "192.168.1.34:9876".to_string(); // TODO load from tile
+    let addr = "localhost:9876".to_string(); // TODO load from tile
 
     use client::FromGUI::*;
     sender.send(Connect(secret, addr));

@@ -142,7 +142,7 @@ fn main() {
     });
 
     let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "192.168.1.34:9876".to_string(); // TODO load from tile
+    let addr = "localhost:9876".to_string(); // TODO load from tile
 
     let (sync_sender, sync_receiver) = channel();
 
@@ -178,7 +178,6 @@ fn main() {
                                 
                             }
                             ,GameEnd() => {println!("TODO game end");}
-                            ,TimerState(t, durs) => {println!("TODO timers");}
                         }
                     }
                     ,UserInput(command) => {

@@ -252,6 +252,7 @@ pub enum FromGUI {
     ,BacktrackLEDDetect()
     ,ShutDown()
     ,SetBrightness(String)
+    ,CancelTimer()
 }
 
 impl FromGUI{
@@ -619,8 +620,8 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut twist = Twist::from_string("F").unwrap();
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
-                                for _ in 0..30{
-                                //for _ in 0..1{
+                                //for _ in 0..30{
+                                for _ in 0..1{
                                     loop {
                                         twist = Twist{
                                             face: rng.gen_range(0..6)
@@ -638,6 +639,9 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 command_queue.push_back(("play".to_string(), vec![]));
                                 command_queue.push_back(("timed_start".to_string(), vec![]));
                                 to_gui_sender.send(ToGUI::StateUpdate())?;
+                            }
+                            ,CancelTimer() => {
+                                command_queue.push_back(("cancel_timer".to_string(), vec![]));
                             }
                             ,SetState(cube) => {
                                 let mut state = state.lock().unwrap();
