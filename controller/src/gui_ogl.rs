@@ -550,6 +550,9 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 }
             };
             black_text(&timer_msg, -1920.0/2.0, (-1080.0/2.0)+250.0, 170.0);
+            if state.record_time > 0 {
+                black_text(&format!("Current\nRecord:\n{:.03}s", Duration::from_millis(state.record_time.try_into().unwrap_or(0)).as_secs_f64()), 1920.0/2.0 - 400.0, 1080.0/2.0, 100.0);
+            }
             let mut do_hover = false;
             for button in &mut*gfx.buttons.borrow_mut(){
                 let hover = button.render(&gfx, &global_transform, &win_pix_transform);
@@ -648,11 +651,15 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 match client_ev {
                     StateUpdate() => { println!("state update"); }
                     ,GameEnd() => { println!("game end"); }
-                    ,Connected(b) => { println!("connected: {}", b); }
+                    ,Connected(b) => {
+                        if b {
+                           sender.send(FromGUI::GetState());
+                        }
+                    }
                     ,MissingConnection() => { println!("missing connection"); }
                 }
             }
-            ,_ => ()
+            ,_ => {}
         }
     );
 
@@ -668,6 +675,5 @@ fn main() {
 
     use client::FromGUI::*;
     sender.send(Connect(secret, addr));
-    sender.send(SetState(Cube::new()));
     ui_loop(gfx, state, sender, receiver);
 }

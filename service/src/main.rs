@@ -720,6 +720,9 @@ fn main() {
                                     if t < config.top_score{
                                         config.top_score = t;
                                         persist_config(&config, &args.config);
+                                        if let Some(sender) = gui_sender.as_ref(){
+                                            sender.send(StreamEvent::RecordState(t));
+                                        }
                                     }
                                 }
                                 ,_=>{}

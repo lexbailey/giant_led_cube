@@ -201,6 +201,7 @@ pub struct ClientState {
     ,pub led_detect_state: LEDDetectState
     ,pub last_timer_update: Instant
     ,pub timer_state: TimerState
+    ,pub record_time: u128
 }
 
 impl ClientState {
@@ -211,6 +212,7 @@ impl ClientState {
             ,led_detect_state: LEDDetectState::new()
             ,last_timer_update: Instant::now()
             ,timer_state: TimerState::default()
+            ,record_time: 0
         }
     }
 }
@@ -247,6 +249,7 @@ pub enum FromGUI {
     ,DetectInputs()
     ,StartGame()
     ,SetState(Cube)
+    ,GetState()
     ,SyncState()
     ,MapLED(usize, usize)
     ,BacktrackLEDDetect()
@@ -501,13 +504,12 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                 to_gui_sender.send(ToGUI::StateUpdate())?;
                                             }
                                         }
-                                        // TODO make this work (sync state from service)
-                                        //,"state" => {
-                                        //    if args.len() >= 1{
-                                        //        let mut state = state.lock().unwrap();
-                                        //        state.cube.deserialise(&args[0]);
-                                        //    }
-                                        //}
+                                        ,"cube_state" => {
+                                            if args.len() >= 1{
+                                                let mut state = state.lock().unwrap();
+                                                state.cube.deserialise(&args[0]);
+                                            }
+                                        }
                                         ,"solved" => {
                                             let mut state = state.lock().unwrap();
                                             state.cube = Cube::new();
@@ -526,6 +528,14 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                     state.timer_state = new_time;
                                                 }
                                                 println!("{:?}, {:?}", state.last_timer_update, state.timer_state);
+                                                to_gui_sender.send(ToGUI::StateUpdate());
+                                            }
+                                        }
+                                        ,"record_time" => {
+                                            if args.len() >= 1 {
+                                                let time: u128 = args[0].parse().unwrap_or(0);
+                                                let mut state = state.lock().unwrap();
+                                                state.record_time = time;
                                                 to_gui_sender.send(ToGUI::StateUpdate());
                                             }
                                         }
@@ -647,6 +657,9 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut state = state.lock().unwrap();
                                 state.cube = cube;
                                 command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
+                            }
+                            ,GetState() => {
+                                command_queue.push_back(("get_state".to_string(), vec![]));
                             }
                             ,SyncState() => {
                                 let state = state.lock().unwrap();
