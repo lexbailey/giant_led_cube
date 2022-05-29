@@ -27,6 +27,10 @@ impl Display for TimerState{
     }
 }
 
+fn round_ms(d: Duration) -> Duration {
+    Duration::from_millis(d.as_millis().try_into().unwrap_or(0))
+}
+
 impl TimerState{
     pub fn reset(&mut self) {
         self.started = None;
@@ -122,11 +126,11 @@ impl TimerState{
                     Duration::new(15,0)
                 }
                 else{
-                    t
+                    round_ms(t)
                 }
             }
             else{
-                self.inspection_end.unwrap() - self.started.unwrap()
+                round_ms(self.inspection_end.unwrap() - self.started.unwrap())
             }
         }
     }
@@ -146,7 +150,7 @@ impl TimerState{
     pub fn solve_so_far(&self) -> Duration {
         let at = Instant::now();
         if self.is_ended() {
-            self.ended.unwrap() - self.effective_inspection_end().unwrap()
+            round_ms(self.ended.unwrap() - self.effective_inspection_end().unwrap())
         }
         else if !self.is_started(){
             Duration::new(0,0)
@@ -160,7 +164,7 @@ impl TimerState{
                     Some(e) => {Instant::now() - e}
                     ,None => {
                         let start = self.started.unwrap();
-                        at - start - Duration::new(15,0)
+                        round_ms(at - start - Duration::new(15,0))
                     }
                 }
             }
@@ -174,11 +178,11 @@ impl TimerState{
                 match self.inspection_end {
                     None => {("0".to_string(), "X".to_string(), "X".to_string())}
                     Some(inspect) => {
-                        let d_in = format!("{}", (inspect - start).as_millis());
+                        let d_in = format!("{}", round_ms(inspect - start).as_millis());
                         match self.ended{
                             None => { ("0".to_string(),d_in,"X".to_string()) }
                             Some(end) => {
-                                let d_tot = format!("{}", (end - start).as_millis());
+                                let d_tot = format!("{}", round_ms(end - start).as_millis());
                                 ("0".to_string(), d_in, d_tot)
                              }
                         }
@@ -244,36 +248,36 @@ mod tests {
         assert!(&iend == "X");
         assert!(&end == "X");
         assert!(!state.is_started());
-        assert!(!state.is_inspecting());
+        assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
         // we can start the timer
         assert!(state.can_start());
         assert!(state.start());
         assert!(state.is_started());
-        assert!(state.is_inspecting());
+        assert!(state.is_inspecting(None));
         assert!(!state.is_ended());
         // but we can't start it again yet
         assert!(!state.can_start());
         assert!(!state.start());
         assert!(state.is_started());
-        assert!(state.is_inspecting());
+        assert!(state.is_inspecting(None));
         assert!(!state.is_ended());
         // after the first twist, inspection has ended
-        assert!(state.is_inspecting());
+        assert!(state.is_inspecting(None));
         assert!(state.twist());
         assert!(state.is_started());
-        assert!(!state.is_inspecting());
+        assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
         // The next twist returns false to indicate it didn't end the inspection
         assert!(!state.twist());
         assert!(state.is_started());
-        assert!(!state.is_inspecting());
+        assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
         // Finally, a solve completes the timer
         assert!(state.solved());
         assert!(!state.solved()); // Can't solve the same scramble twice, needs reset between
         assert!(state.is_started());
-        assert!(!state.is_inspecting());
+        assert!(!state.is_inspecting(None));
         assert!(state.is_ended());
         let (start, iend, end) = state.serialise();
         assert!(&start != "X");
