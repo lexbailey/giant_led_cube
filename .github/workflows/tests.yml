@@ -4,6 +4,8 @@ jobs:
   Tests:
     runs-on: ubuntu-latest
     steps:
+      - name: install deps from apt
+        run: sudo apt install libasound2-dev
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
         with:
