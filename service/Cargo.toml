@@ -21,5 +21,6 @@ thiserror = "1.0.30"
 rodio = "0.15.0"
 rand = "0.8.5"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 tee_readwrite = "0.1.0"
+uuid = { version = "1.1.0", features = ["serde"] }
