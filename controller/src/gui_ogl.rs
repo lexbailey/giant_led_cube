@@ -183,7 +183,6 @@ shader_struct!{
         }
         "#
     ,r#"
-        #version 330 core
         #version 300 es
         precision mediump float;
         out vec4 FragColor;
