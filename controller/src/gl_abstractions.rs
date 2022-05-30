@@ -6,6 +6,11 @@ pub struct UniformMat4{
 }
 
 #[derive(Default)]
+pub struct UniformVec2{
+    id: i32
+}
+
+#[derive(Default)]
 pub struct UniformVec3{
     id: i32
 }
@@ -44,6 +49,14 @@ impl UniformVec3 {
     }
 }
 
+impl UniformVec2 {
+    pub fn set(&self, r:f32, g:f32){
+        unsafe{
+            gl::Uniform2f(self.id, r, g);
+        }
+    }
+}
+
 impl UniformSampler2D {
     pub fn set(&self, a:i32){
         unsafe{
@@ -63,6 +76,7 @@ macro_rules! uni_from {
 }
 
 uni_from!(UniformMat4);
+uni_from!(UniformVec2);
 uni_from!(UniformVec3);
 uni_from!(UniformVec4);
 uni_from!(UniformSampler2D);
