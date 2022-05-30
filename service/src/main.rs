@@ -17,14 +17,13 @@ use std::cmp::min;
 use std::fmt::{self,Display};
 
 use game_timer::TimerState;
+use datapoints::{Datapoint, GameStartDatapoint, TwistDatapoint, GameSolveDatapoint};
 
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
 use chrono::Utc;
 
-mod schema;
-use schema::{Datapoint, GameStartDatapoint, TwistDatapoint, GameSolveDatapoint};
 
 #[derive(CLIParser, Debug)]
 struct Args{
