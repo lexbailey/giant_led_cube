@@ -657,7 +657,7 @@ fn main() {
                         };
                         let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
                             rotation: twist.to_string(),
-                            updated_cube_state: cube.serialise(),
+                            cube_state: cube.serialise(),
                             game_id: game_state.game_id(),
                             play_time_milliseconds,
                             timestamp: Utc::now(),
@@ -689,6 +689,7 @@ fn main() {
                                         game_id: game_state.game_id().unwrap(),
                                         play_time_milliseconds: t.try_into().unwrap_or(u32::MAX),
                                         new_top_score,
+                                        cube_state: cube.serialise(),
                                         timestamp: Utc::now(),
                                     }));
                                 }
