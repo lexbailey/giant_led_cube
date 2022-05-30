@@ -1,9 +1,0 @@
-name: GitHub Actions Demo
-on: [push]
-jobs:
-    Coverage:
-        runs-on: ubuntu-latest
-        steps:
-            - name: rust-tarpaulin
-              uses: actions-rs/tarpaulin@v0.1.0
-
