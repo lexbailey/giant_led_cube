@@ -1,7 +1,7 @@
-name: GitHub Actions Demo
+name: Code Coverage (nightly rust tools, grcov -> codecov.io)
 on: [push]
 jobs:
-  Tests:
+  TestCoverage:
     runs-on: ubuntu-latest
     steps:
       - name: install deps from apt

@@ -1,4 +1,4 @@
-name: GitHub Actions Demo
+name: Test suite (stable rust tools)
 on: [push]
 jobs:
   Tests:
