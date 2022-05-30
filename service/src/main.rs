@@ -21,7 +21,10 @@ use game_timer::TimerState;
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
-use chrono::Local;
+use chrono::Utc;
+
+mod schema;
+use schema::*;
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -93,65 +96,6 @@ enum EvStreamError {
     IO(#[from] std::io::Error)
     ,#[error("Sender Error: {0}")]
     Sender(#[from] std::sync::mpsc::SendError<Event>)
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Datapoint {
-    #[serde(rename = "indexId")]
-    pub dataset_name: String,
-    pub timestamp: String,
-    pub strings: Vec<String>,
-    pub doubles: Vec<f64>,
-}
-
-impl Datapoint {
-    fn timestamp() -> String {
-        Local::now().to_rfc3339()
-    }
-
-    fn start_timed_game(game_state: &TimerState) -> Datapoint {
-        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
-        Datapoint {
-            dataset_name: "start_timed_name".to_string(),
-            timestamp: Datapoint::timestamp(),
-            strings: vec![
-                game_id,
-            ],
-            doubles: vec![],
-        }
-    }
-
-    fn twist(game_state: &TimerState, twist: &Twist) -> Datapoint {
-        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
-        let game_duration_so_far = game_state.duration_so_far();
-        Datapoint {
-            dataset_name: "twist".to_string(),
-            timestamp: Datapoint::timestamp(),
-            strings: vec![
-                game_id,
-                format!("{}", twist),
-            ],
-            doubles: vec![
-                game_duration_so_far.as_secs_f64(),
-            ],
-        }
-    }
-
-    fn solved(game_state: &TimerState) -> Datapoint {
-        let game_id = game_state.game_id().unwrap_or_else(|| "unknown game id".to_string());
-        let game_duration = game_state.recorded_time().unwrap_or(Duration::MAX);
-        Datapoint {
-            dataset_name: "twist".to_string(),
-            timestamp: Datapoint::timestamp(),
-            strings: vec![
-                game_id,
-            ],
-            doubles: vec![
-                game_duration.as_secs_f64(),
-            ],
-        }
-    }
 }
 
 fn handle_datapoints(datapoint_receiver: Receiver<Datapoint>, datapoint_secret: String) -> std::thread::JoinHandle<()> {
@@ -665,7 +609,11 @@ fn main() {
                             if let Some(sender) = gui_sender.as_ref(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
-                            datapoints_sender.try_send(Datapoint::start_timed_game(&game_state));
+                            let _ = datapoints_sender.try_send(Datapoint::GameStart(GameStartDatapoint {
+                                game_id: game_state.game_id().unwrap(),
+                                cube_state: cube.serialise(),
+                                timestamp: Utc::now(),
+                            }));
                         }
                         ,ClientEvent::CancelTimedGame() => {
                             game_state.reset();
@@ -702,7 +650,13 @@ fn main() {
                         }
                         sound_sender.send(Sound::Twist());
                         cube.twist(twist);
-                        datapoints_sender.try_send(Datapoint::twist(&game_state, &twist));
+                        let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
+                            rotation: twist.to_string(),
+                            updated_cube_state: cube.serialise(),
+                            game_id: game_state.game_id(),
+                            play_milliseconds_elapsed: Some(game_state.solve_so_far().as_millis().try_into().unwrap_or(u32::MAX)),
+                            timestamp: Utc::now(),
+                        }));
                     }
                     ,DeviceEvent::Solved() => {
                         let is_win = game_state.solved();
@@ -724,10 +678,18 @@ fn main() {
                                             sender.send(StreamEvent::RecordState(t));
                                         }
                                     }
+                                    let _ = datapoints_sender.try_send(Datapoint::GameSolve(GameSolveDatapoint {
+                                        game_id: game_state.game_id().unwrap(),
+                                        // FIXME: Record inspection duration
+                                        inspection_milliseconds_duration: 9999,
+                                        play_milliseconds_duration: t.try_into().unwrap_or(u32::MAX),
+                                        // FIXME: Start recording this
+                                        number_of_twists: 9999,
+                                        timestamp: Utc::now(),
+                                    }));
                                 }
                                 ,_=>{}
                             }
-                            datapoints_sender.try_send(Datapoint::solved(&game_state));
                         }
                     }
                     ,_=>{}
