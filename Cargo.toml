@@ -7,5 +7,7 @@ members = [
     "device",
     "service",
     "game_timer",
+    "gl_abstractions",
+    "affine",
 ]
 

@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-opengl = ["gl", "glutin", "fontdue"]
+opengl = ["gl", "glutin", "gl_abstractions", "affine", "fontdue"]
 cli = ["rustyline"]
+gles = []
 
 [[bin]]
 name = "cube_control_gui"
@@ -20,6 +21,8 @@ required-features = ["cli"]
 [dependencies]
 glutin = { version="0.28.0", optional=true }
 gl = { version="0.14.0", optional=true }
+gl_abstractions = { path="../gl_abstractions", optional=true }
+affine = { path="../affine", optional=true }
 rand = "0.8.5"
 cube_model = {path="../cube_model"}
 plain_authentic_commands = { path="../plain_authentic_commands" }

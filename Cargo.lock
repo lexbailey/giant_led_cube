@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "affine"
+version = "0.1.0"
+
+[[package]]
 name = "ahash"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -393,10 +397,12 @@ dependencies = [
 name = "controller"
 version = "0.1.0"
 dependencies = [
+ "affine",
  "cube_model",
  "fontdue",
  "game_timer",
  "gl",
+ "gl_abstractions",
  "glutin",
  "plain_authentic_commands",
  "rand",
@@ -865,6 +871,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a94edab108827d67608095e269cf862e60d920f144a5026d3dbcfd8b877fb404"
 dependencies = [
  "gl_generator",
+]
+
+[[package]]
+name = "gl_abstractions"
+version = "0.1.0"
+dependencies = [
+ "gl",
 ]
 
 [[package]]

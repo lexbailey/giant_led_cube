@@ -207,3 +207,4 @@ macro_rules! shader_struct {
         );
     }
 }
+

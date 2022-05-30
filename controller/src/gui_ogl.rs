@@ -2,12 +2,10 @@ extern crate gl;
 extern crate glutin;
 
 use glutin::dpi::PhysicalPosition;
-use glutin::event::{ElementState, WindowEvent, MouseButton};
-use game_timer::TimerState;
+use glutin::event::{ElementState, MouseButton};
 
 use std::collections::HashMap;
 
-mod affine;
 use gl::types::*;
 use std::mem;
 use std::ptr;
@@ -16,9 +14,11 @@ use std::ffi::CString;
 use std::time::{Instant,Duration};
 use std::cell::RefCell;
 
-mod gl_abstractions;
 use gl_abstractions as gla;
-use gla::{UniformMat4, UniformVec3, UniformVec4, UniformSampler2D};
+use gla::{UniformMat4, UniformVec3, UniformVec4, UniformSampler2D, shader_struct, impl_shader};
+
+#[cfg(feature="gles")]
+use gla::UniformVec2;
 
 pub mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
@@ -33,6 +33,8 @@ use fontdue::Font;
 
 use std::thread;
 
+// Shaders for main OpenGL version
+#[cfg(not(feature="gles"))]
 shader_struct!{
     CubeShader
     ,r#"
@@ -66,6 +68,7 @@ shader_struct!{
     }
 }
 
+#[cfg(not(feature="gles"))]
 shader_struct!{
     ImageShader 
     ,r#"
@@ -118,14 +121,107 @@ shader_struct!{
     }
 }
 
+// Shaders for OpenGLES version
+#[cfg(feature="gles")]
+shader_struct!{
+    CubeShader
+    ,r#"
+        #version 300 es
+        precision mediump float;
+        layout (location = 0) in vec4 aPos;
+        uniform mat4 u_global_transform;
+        uniform mat4 u_face_transform;
+        uniform mat4 u_offset;
+        uniform mat4 u_transform;
+        void main()
+        {
+            gl_Position = aPos  * u_offset * u_face_transform * u_transform * u_global_transform;
+        }
+        "#
+    ,r#"
+        #version 300 es
+        precision mediump float;
+        out vec4 FragColor;
+        uniform vec3 u_color;
+        void main()
+        {
+           // Set the fragment color to the color passed from the vertex shader
+           FragColor = vec4(u_color, 1.0);
+        }
+        "#
+    ,{
+        u_face_transform: UniformMat4,
+        u_offset: UniformMat4,
+        u_transform: UniformMat4,
+        u_color: UniformVec3,
+        u_global_transform: UniformMat4,
+    }
+}
+
+#[cfg(feature="gles")]
+shader_struct!{
+    ImageShader 
+    ,r#"
+        #version 300 es
+        precision mediump float;
+        layout (location = 0) in vec2 screenpos;
+        layout (location = 1) in vec2 texcoord_in;
+
+        uniform mat4 u_global_transform;
+        uniform mat4 u_pix_transform;
+        uniform mat4 u_image_geom;
+        uniform mat4 u_translate;
+        uniform mat4 u_scale;
+        uniform vec4 u_glyph_select;
+
+        out vec2 texcoord;
+
+        void main()
+        {
+            gl_Position = vec4(screenpos, 0.0, 1.0) * u_image_geom * u_translate * u_global_transform * u_pix_transform;
+            texcoord = (u_glyph_select.xy + (texcoord_in * u_glyph_select.zw));
+        }
+        "#
+    ,r#"
+        #version 330 core
+        #version 300 es
+        precision mediump float;
+        out vec4 FragColor;
+        
+        in vec2 texcoord;
+    
+        uniform vec4 u_color;
+        uniform sampler2D u_texture;
+        uniform vec2 u_tex_size;
+
+        void main()
+        {
+           FragColor =
+             min(1.0, (u_color.a * texture(u_texture, texcoord / u_tex_size).r) + (1.0-u_color.a))
+             *
+             vec4(u_color.rgb, 1.0)
+           ;
+        }
+        "#
+    ,{
+        u_color: UniformVec4,
+        u_texture: UniformSampler2D,
+        u_image_geom: UniformMat4,
+        u_translate: UniformMat4,
+        u_global_transform: UniformMat4,
+        u_pix_transform: UniformMat4,
+        u_scale: UniformMat4,
+        u_glyph_select: UniformVec4,
+        u_tex_size: UniformVec2,
+    }
+}
+
 struct DataModel{
     // TODO move d, r, diff, and frames into the renderdata for the opengl version
     d: f32
     ,r: f32
     ,diff: f32
     ,frames: i32
-    ,test_start: Instant
-    ,test_time: Duration
 }
 
 
@@ -199,21 +295,12 @@ struct RenderData{
     ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<ToGUI>>>
     ,font: Font
     ,texture: u32
-    ,font_scale: f32
     ,cur: PhysicalPosition<f64>
     ,s_cur: PhysicalPosition<f64>
     ,pressed: bool
     ,released: bool
     ,buttons: RefCell<Vec<Button>>
     ,font_cache: RefCell<GlyphSheet>
-/*
-    ,font_cache: HashMap<fontdue::layout::GlyphRasterConfig, (usize, usize, usize, usize)>
-    ,font_bitmap: Vec<u8>
-    ,fmap_pos_x: usize
-    ,fmap_pos_y: usize
-    ,fmap_max_used_y: usize
-    ,fmap_width: usize
-    ,fmap_height: usize*/
 }
 
 fn init_render_data() -> RenderData{
@@ -352,7 +439,6 @@ fn init_render_data() -> RenderData{
             ,events_loop: RefCell::new(Some(events_loop))
             ,font: font
             ,texture: texture
-            ,font_scale: 1.0 // make this a config option??
             ,cur: PhysicalPosition{x:0.0,y:0.0}
             ,s_cur: PhysicalPosition{x:0.0,y:0.0}
             ,buttons: RefCell::new(vec![scramble_button, end_button])
@@ -433,6 +519,9 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
             let image_translate = Tf::translate(c.x + x, c.y + y,0.0) ;
             gfx.image_shader.u_image_geom.set(&image_geom.data);
             gfx.image_shader.u_translate.set(&image_translate.data);
+            #[cfg(feature="gles")]{
+                gfx.image_shader.u_tex_size.set(glyphs.width as f32, glyphs.height as f32);
+            }
             if let Some((gx,gy,gw,gh)) = location{
                 gfx.image_shader.u_glyph_select.set(gx as f32, gy as f32, gw as f32, gh as f32);
             }
@@ -468,6 +557,9 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         else{
             gfx.image_shader.u_color.set(0.3,0.3,0.3, 0.0);
         }
+        #[cfg(feature="gles")] {
+            gfx.image_shader.u_tex_size.set(1.0, 1.0);
+        }
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         let image_geom = Tf::scale(width-20.0, height-20.0, 1.0);
         let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
@@ -480,6 +572,9 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         }
         else{
             gfx.image_shader.u_color.set(0.5,1.0,0.5, 0.0);
+        }
+        #[cfg(feature="gles")] {
+            gfx.image_shader.u_tex_size.set(1.0, 1.0);
         }
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         hover
@@ -512,8 +607,6 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
         ,r:0.0
         ,diff: 0.0
         ,frames:0
-        ,test_start: Instant::now()
-        ,test_time: Duration::from_millis(0)
     };
 
     fn update(data: &mut DataModel){
@@ -540,22 +633,22 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             Tf::scale((wh / (ww / RATIO))/RATIO,1.0,1.0)
         };
 
-        const fw:f32  = 1920.0;
-        const fh:f32  = 1080.0;
+        const FW:f32  = 1920.0;
+        const FH:f32  = 1080.0;
 
         // Calculate the transform to 1:1 window pixel scale, applied after global transform, pretend the screen is 1920x1080
         let pscale = if ww < (wh * RATIO) {
              //(1.0*RATIO)/ww // absolute pixel size (items on screen maintain absoluse size as window scales)
-             (1.0*RATIO)/(fw/2.0) // fixed "fake" screen size, scaled to fit. (whole window image is scaled)
+             (1.0*RATIO)/(FW/2.0) // fixed "fake" screen size, scaled to fit. (whole window image is scaled)
         }
         else{
              //1.0/wh
-             2.0/fh
+             2.0/FH
         };
         let win_pix_transform = Tf::scale(pscale, pscale, 1.0);
         gfx.s_cur = PhysicalPosition{
-            x: gfx.cur.x / ww as f64 * fw as f64
-            ,y: -gfx.cur.y / wh as f64 * fh as f64
+            x: gfx.cur.x / ww as f64 * FW as f64
+            ,y: -gfx.cur.y / wh as f64 * FH as f64
         };
         if ww < (wh * RATIO){
             gfx.s_cur.y /= (ww / (wh * RATIO)) as f64;
@@ -702,9 +795,10 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
 
     let _client_event_thread = thread::spawn(move||{
         for ev in receiver{
-            proxy.send_event(ev);
+            let _ignored = proxy.send_event(ev);
         }
     });
+
     events_loop.run(move |event, _win_target, cf|
         match event {
             Event::WindowEvent{ event: ev,..} => {

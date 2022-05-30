@@ -521,7 +521,6 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                             if args.len() >= 3{
                                                 let mut state = state.lock().unwrap();
                                                 state.last_timer_update = now;
-                                                let dur = |d|{u64::from_str(d).and_then(|d|Ok(Duration::from_millis(d))).ok()};
                                                 if let Ok(new_time) = TimerState::deserialise_now_ish(
                                                     (args[0].clone(), args[1].clone(), args[2].clone())
                                                 ){
@@ -627,7 +626,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 let mut state = state.lock().unwrap();
                                 state.cube = cube_model::Cube::new();
                                 let mut last_twist = Twist::from_string("F").unwrap();
-                                let mut twist = Twist::from_string("F").unwrap();
+                                let mut twist;
                                 let mut rng = rand::rngs::OsRng;
                                 // A very naive scramble algorithm
                                 for _ in 0..30{
