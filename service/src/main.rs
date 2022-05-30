@@ -24,7 +24,7 @@ use std::io::Cursor;
 use chrono::Utc;
 
 mod schema;
-use schema::*;
+use schema::{Datapoint, GameStartDatapoint, TwistDatapoint, GameSolveDatapoint};
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -650,11 +650,16 @@ fn main() {
                         }
                         sound_sender.send(Sound::Twist());
                         cube.twist(twist);
+
+                        let play_time_milliseconds = match game_state.game_id() {
+                            Some(_) => game_state.solve_so_far().as_millis().try_into().ok(),
+                            None => None,
+                        };
                         let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
                             rotation: twist.to_string(),
                             updated_cube_state: cube.serialise(),
                             game_id: game_state.game_id(),
-                            play_milliseconds_elapsed: Some(game_state.solve_so_far().as_millis().try_into().unwrap_or(u32::MAX)),
+                            play_time_milliseconds,
                             timestamp: Utc::now(),
                         }));
                     }
@@ -671,7 +676,9 @@ fn main() {
                                         sender.send(StreamEvent::ReportTime(time));
                                     }
                                     let t = time.as_millis();
+                                    let mut new_top_score = false;
                                     if (config.top_score == 0) || (t < config.top_score){
+                                        new_top_score = true;
                                         config.top_score = t;
                                         persist_config(&config, &args.config);
                                         if let Some(sender) = gui_sender.as_ref(){
@@ -680,11 +687,8 @@ fn main() {
                                     }
                                     let _ = datapoints_sender.try_send(Datapoint::GameSolve(GameSolveDatapoint {
                                         game_id: game_state.game_id().unwrap(),
-                                        // FIXME: Record inspection duration
-                                        inspection_milliseconds_duration: 9999,
-                                        play_milliseconds_duration: t.try_into().unwrap_or(u32::MAX),
-                                        // FIXME: Start recording this
-                                        number_of_twists: 9999,
+                                        play_time_milliseconds: t.try_into().unwrap_or(u32::MAX),
+                                        new_top_score,
                                         timestamp: Utc::now(),
                                     }));
                                 }
