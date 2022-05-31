@@ -500,8 +500,6 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
                 
                 glyphs.max_used_y = std::cmp::max(glyphs.max_used_y, glyphs.pos_y + metrics.height);
 
-                //println!("Cache-render {} at {},{} with size {},{}", c.parent, gfx.fmap_pos_x, gfx.fmap_pos_y, metrics.width, metrics.height);
-
                 // Copy the glyph bitmap to the main bitmap sheet
                 for y in 0..metrics.height{
                     for x in 0..metrics.width{
@@ -676,7 +674,6 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 let f = &state.cube.faces[i];
                 for j in 0..9{
                     let col = f.subfaces[j].color;
-                    //println!("{:?}", col);
                     match col {
                         cube::Colors::Red => gfx.shader.u_color.set(1.0,0.0,0.0),
                         cube::Colors::Green => gfx.shader.u_color.set(0.0,1.0,0.0),
@@ -773,8 +770,6 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             }
             gfx.pressed = false;
             gfx.released = false;
-            // Cursor pos debug
-            //black_text("X", gfx.s_cur.x as f32 -35.0, gfx.s_cur.y as f32+35.0, 70.0);
         }
         gfx.window.swap_buffers().unwrap();
     }
@@ -803,7 +798,12 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             Event::WindowEvent{ event: ev,..} => {
                 match ev {
                     WindowEvent::CloseRequested => {*cf = ControlFlow::Exit;}
-                    ,WindowEvent::Resized(newsize) => {gfx.window.resize(newsize);}
+                    ,WindowEvent::Resized(newsize) => {
+                        gfx.window.resize(newsize);
+                        unsafe{
+                        gl::Viewport(0,0,newsize.width as i32, newsize.height as i32);
+                        }
+                    }
                     ,WindowEvent::CursorMoved{ position: p,.. } => {
                         let sz = gfx.window.window().inner_size();
                         let ww = sz.width as f64;
