@@ -861,6 +861,15 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         gfx.pressed |= b == MouseButton::Left && s == ElementState::Pressed;
                         gfx.released |= b == MouseButton::Left && s == ElementState::Released;
                     }
+                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F10), state:s, ..}, ..} => {
+                        println!("========================================================");
+                        println!("= You have pressed F10 to exit the cube GUI.           =");
+                        println!("= This probably means the cube CLI is about to start.  =");
+                        println!("= If this was an accident then please press CTRL-C and =");
+                        println!("= then CTRL-D to exit the CLI and return to the GUI.   =");
+                        println!("========================================================");
+                        std::process::exit(0);
+                    }
                     ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F7), state:s, ..}, ..} => {
                         let already_showing = gfx.show_ip;
                         let show = s == ElementState::Pressed;
