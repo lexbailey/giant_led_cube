@@ -33,6 +33,13 @@ use fontdue::Font;
 
 use std::thread;
 
+use std::path::Path;
+use std::fs::File;
+
+use serde::{Deserialize, Serialize};
+
+use std::process::Command;
+
 // Shaders for main OpenGL version
 #[cfg(not(feature="gles"))]
 shader_struct!{
@@ -301,6 +308,8 @@ struct RenderData{
     ,released: bool
     ,buttons: RefCell<Vec<Button>>
     ,font_cache: RefCell<GlyphSheet>
+    ,show_ip: bool
+    ,ip: String
 }
 
 fn init_render_data() -> RenderData{
@@ -448,6 +457,8 @@ fn init_render_data() -> RenderData{
             ,pressed: false
             ,released: false
             ,font_cache: RefCell::new(GlyphSheet::new(tex_size))
+            ,show_ip: false
+            ,ip: "".to_string()
         }
     };
     gfx_objs
@@ -675,125 +686,132 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             let transform = Tf::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
             gfx.shader.u_transform.set(&transform.data);
 
-            for i in 0..5{
-                gfx.shader.u_offset.set(&gfx.offset.data);
-                gfx.shader.u_color.set(0.0,0.0,0.0);
-                gfx.shader.u_face_transform.set(&gfx.faces[i].data);
-                gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-                gfx.shader.u_offset.set(&gfx.offset_subface.data);
-                let f = &state.cube.faces[i];
-                for j in 0..9{
-                    let col = f.subfaces[j].color;
-                    match col {
-                        cube::Colors::Red => gfx.shader.u_color.set(1.0,0.0,0.0),
-                        cube::Colors::Green => gfx.shader.u_color.set(0.0,1.0,0.0),
-                        cube::Colors::Orange => gfx.shader.u_color.set(1.0,0.6,0.2),
-                        cube::Colors::Blue => gfx.shader.u_color.set(0.0,0.0,1.0),
-                        cube::Colors::White => gfx.shader.u_color.set(1.0,1.0,1.0),
-                        cube::Colors::Yellow => gfx.shader.u_color.set(1.0,1.0,0.0),
-                        cube::Colors::Blank => gfx.shader.u_color.set(0.0,0.0,0.0),
-                    }
-                    let sft = &gfx.subfaces[j];
-                    gfx.shader.u_face_transform.set(&((&gfx.faces[i] * sft).data));
+            if !gfx.show_ip{
+                for i in 0..5{
+                    gfx.shader.u_offset.set(&gfx.offset.data);
+                    gfx.shader.u_color.set(0.0,0.0,0.0);
+                    gfx.shader.u_face_transform.set(&gfx.faces[i].data);
                     gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+                    gfx.shader.u_offset.set(&gfx.offset_subface.data);
+                    let f = &state.cube.faces[i];
+                    for j in 0..9{
+                        let col = f.subfaces[j].color;
+                        match col {
+                            cube::Colors::Red => gfx.shader.u_color.set(1.0,0.0,0.0),
+                            cube::Colors::Green => gfx.shader.u_color.set(0.0,1.0,0.0),
+                            cube::Colors::Orange => gfx.shader.u_color.set(1.0,0.6,0.2),
+                            cube::Colors::Blue => gfx.shader.u_color.set(0.0,0.0,1.0),
+                            cube::Colors::White => gfx.shader.u_color.set(1.0,1.0,1.0),
+                            cube::Colors::Yellow => gfx.shader.u_color.set(1.0,1.0,0.0),
+                            cube::Colors::Blank => gfx.shader.u_color.set(0.0,0.0,0.0),
+                        }
+                        let sft = &gfx.subfaces[j];
+                        gfx.shader.u_face_transform.set(&((&gfx.faces[i] * sft).data));
+                        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+                    }
+                }
+                gfx.shader.u_color.set(1.0,1.0,1.0);
+                gfx.shader.u_offset.set(&gfx.offset.data);
+                for i in 0..5{
+                    gfx.shader.u_face_transform.set(&gfx.faces[i].data);
+                    gl::DrawArrays(gl::LINE_LOOP, 0, 4);
                 }
             }
-            gfx.shader.u_color.set(1.0,1.0,1.0);
-            gfx.shader.u_offset.set(&gfx.offset.data);
-            for i in 0..5{
-                gfx.shader.u_face_transform.set(&gfx.faces[i].data);
-                gl::DrawArrays(gl::LINE_LOOP, 0, 4);
-            }
 
-            let mut text = |s, x, y, pt, col|{
-                render_text(&mut gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
+            let mut text = |gfx, s, x, y, pt, col|{
+                render_text(gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
             };
-            let mut black_text = |s, x, y, pt|{
-                text(s,x,y,pt,(0.0,0.0,0.0));
+            let mut black_text = |gfx, s, x, y, pt|{
+                text(gfx, s,x,y,pt,(0.0,0.0,0.0));
             };
-            black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
-            black_text("⇩click to play⇩", -1920.0/2.0, 350.0, 70.0);
-            black_text("LED Brightness", -1920.0/2.0, -240.0, 50.0);
-            let now = Instant::now();
-
-            let timer_msg = if !state.timer_state.is_started() {
-                "Ready to start".to_string()
-            }
-            else if state.timer_state.is_inspecting(Some(now)) {
-                format!("Inspection: {}s", 15 - state.timer_state.inspection_so_far(Some(now)).as_secs())
+            if gfx.show_ip{
+                text(gfx, &gfx.ip, -1920.0/2.0, 540.0, 30.0, (1.0,0.0,0.0));
             }
             else{
-                if state.timer_state.is_ended() {
-                    let flash = (data.frames % 30) > 10;
-                    if flash {
-                        format_time(state.timer_state.solve_so_far())
+                black_text(gfx, "Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
+                black_text(gfx, "⇩click to play⇩", -1920.0/2.0, 350.0, 70.0);
+                black_text(gfx, "LED Brightness", -1920.0/2.0, -240.0, 50.0);
+                let now = Instant::now();
+
+                let timer_msg = if !state.timer_state.is_started() {
+                    "Ready to start".to_string()
+                }
+                else if state.timer_state.is_inspecting(Some(now)) {
+                    format!("Inspection: {}s", 15 - state.timer_state.inspection_so_far(Some(now)).as_secs())
+                }
+                else{
+                    if state.timer_state.is_ended() {
+                        let flash = (data.frames % 30) > 10;
+                        if flash {
+                            format_time(state.timer_state.solve_so_far())
+                        }
+                        else {
+                            "".to_string()
+                        }
                     }
                     else {
-                        "".to_string()
+                        format_time(state.timer_state.solve_so_far())
+                    }
+                };
+                black_text(gfx, &timer_msg, -1920.0/2.0, (-1080.0/2.0)+250.0, 170.0);
+                if state.record_time > 0 {
+                    black_text(gfx, &format!("Current\nRecord:\n{}", format_time(Duration::from_millis(state.record_time.try_into().unwrap_or(0)))), 1920.0/2.0 - 500.0, 1080.0/2.0, 100.0);
+                }
+                let mut do_hover = false;
+                for button in &mut*gfx.buttons.borrow_mut(){
+                    let hover = button.render(&gfx, &global_transform, &win_pix_transform);
+                    if hover{
+                        do_hover = true;
+                        if gfx.pressed{
+                            button.click_state = 1;
+                        }
+                        if gfx.released && button.click_state == 1{
+                            button.click_state = 2;
+                        }
                     }
                 }
-                else {
-                    format_time(state.timer_state.solve_so_far())
+                use glutin::window::CursorIcon;
+                if do_hover{
+                    gfx.window.window().set_cursor_icon(CursorIcon::Hand);
                 }
-            };
-            black_text(&timer_msg, -1920.0/2.0, (-1080.0/2.0)+250.0, 170.0);
-            if state.record_time > 0 {
-                black_text(&format!("Current\nRecord:\n{}", format_time(Duration::from_millis(state.record_time.try_into().unwrap_or(0)))), 1920.0/2.0 - 500.0, 1080.0/2.0, 100.0);
-            }
-            let mut do_hover = false;
-            for button in &mut*gfx.buttons.borrow_mut(){
-                let hover = button.render(&gfx, &global_transform, &win_pix_transform);
-                if hover{
-                    do_hover = true;
-                    if gfx.pressed{
-                        button.click_state = 1;
+                else{
+                    gfx.window.window().set_cursor_icon(CursorIcon::Default);
+                }
+                for button in &mut*gfx.buttons.borrow_mut(){
+                    if button.click_state == 1 && gfx.released{
+                        button.click_state = 0;
                     }
-                    if gfx.released && button.click_state == 1{
-                        button.click_state = 2;
-                    }
-                }
-            }
-            use glutin::window::CursorIcon;
-            if do_hover{
-                gfx.window.window().set_cursor_icon(CursorIcon::Hand);
-            }
-            else{
-                gfx.window.window().set_cursor_icon(CursorIcon::Default);
-            }
-            for button in &mut*gfx.buttons.borrow_mut(){
-                if button.click_state == 1 && gfx.released{
-                    button.click_state = 0;
-                }
-                if button.click_state == 2{
-                    button.click_state = 0;
-                    use client::FromGUI::*;
-                    match button.id.as_ref(){
-                        "scramble" => {
-                            sender.send(StartGame());
-                        }
-                        ,"reset" => {
-                            sender.send(CancelTimer());
-                            sender.send(SetState(Cube::new()));
-                        }
-                        ,"b+" => {
-                            if data.brightness >= MAX_BRIGHTNESS - B_STEP {
-                                data.brightness = MAX_BRIGHTNESS;
+                    if button.click_state == 2{
+                        button.click_state = 0;
+                        use client::FromGUI::*;
+                        match button.id.as_ref(){
+                            "scramble" => {
+                                sender.send(StartGame());
                             }
-                            else{
-                                data.brightness += B_STEP;
+                            ,"reset" => {
+                                sender.send(CancelTimer());
+                                sender.send(SetState(Cube::new()));
                             }
-                            sender.send(SetBrightness(format!("{}", data.brightness)));
+                            ,"b+" => {
+                                if data.brightness >= MAX_BRIGHTNESS - B_STEP {
+                                    data.brightness = MAX_BRIGHTNESS;
+                                }
+                                else{
+                                    data.brightness += B_STEP;
+                                }
+                                sender.send(SetBrightness(format!("{}", data.brightness)));
+                            }
+                            ,"b-" => {
+                                if data.brightness <= MIN_BRIGHTNESS + B_STEP {
+                                    data.brightness = MIN_BRIGHTNESS;
+                                }
+                                else{
+                                    data.brightness -= B_STEP;
+                                }
+                                sender.send(SetBrightness(format!("{}", data.brightness)));
+                            }
+                            ,_=>{}
                         }
-                        ,"b-" => {
-                            if data.brightness <= MIN_BRIGHTNESS + B_STEP {
-                                data.brightness = MIN_BRIGHTNESS;
-                            }
-                            else{
-                                data.brightness -= B_STEP;
-                            }
-                            sender.send(SetBrightness(format!("{}", data.brightness)));
-                        }
-                        ,_=>{}
                     }
                 }
             }
@@ -843,6 +861,13 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         gfx.pressed |= b == MouseButton::Left && s == ElementState::Pressed;
                         gfx.released |= b == MouseButton::Left && s == ElementState::Released;
                     }
+                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F7), state:s, ..}, ..} => {
+                        let show = s == ElementState::Pressed;
+                        if show {
+                            gfx.ip = Command::new("ip").args(["address", "show"]).output().and_then(|o|Ok(String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or("Unable to get IP details".to_string());
+                        }
+                        gfx.show_ip = show;
+                    }
                     ,_=>{}
                 }
             }
@@ -875,15 +900,32 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
 
 }
 
+#[derive(Serialize, Deserialize)]
+struct GuiConfig{
+    server: String
+    ,secret: String
+}
+
 fn main() {
+
+    let mut config: GuiConfig= {
+        let p = Path::new("gui_config");
+        match File::open(p) {
+            Ok(f) => match serde_json::from_reader(f) {
+                Ok(d) => d
+                ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
+            }
+            ,Err(e) => {println!("Failed to load config file: {}", e); std::process::exit(1);}
+        }
+    };
+
     let gfx = init_render_data();
 
     let (state, sender, receiver, _client) = start_client();
 
-    let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "localhost:9876".to_string(); // TODO load from tile
+    let secret = config.secret.as_bytes().to_vec();
+    let addr = config.server;
 
-    use client::FromGUI::*;
-    sender.send(Connect(secret, addr));
+    sender.send(client::FromGUI::Connect(secret, addr));
     ui_loop(gfx, state, sender, receiver);
 }

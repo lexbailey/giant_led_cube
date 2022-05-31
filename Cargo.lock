@@ -408,6 +408,8 @@ dependencies = [
  "plain_authentic_commands",
  "rand",
  "rustyline",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
