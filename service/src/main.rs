@@ -113,8 +113,8 @@ fn handle_datapoints(datapoint_receiver: Receiver<Datapoint>, datapoint_secret: 
     })
 }
 
-fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>){
-    let mut auth = MessageHandler::new(b"secret".to_vec());
+fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>, secret: Vec<u8>){
+    let mut auth = MessageHandler::new(secret);
     let buffer = BufReader::new(read_stream);
     let (stream_sender, stream_receiver) = channel::<StreamEvent>();
     let gui_sender = stream_sender.clone();
@@ -353,6 +353,8 @@ fn main() {
 
     persist_config(&config, &args.config);
 
+    let secret = config.secret.as_bytes().to_vec();
+
     let (sender, receiver) = channel::<Event>();
 
     let net_sender = sender.clone();
@@ -492,7 +494,7 @@ fn main() {
                             ,Ok(read_stream) => {
                                 println!("Connection from: {}", match read_stream.peer_addr() {Ok(addr)=>addr.to_string(), Err(e)=>e.to_string()});
                                 match read_stream.try_clone() {
-                                    Ok(write_stream) => {handle_stream(read_stream, write_stream, net_sender.clone());}
+                                    Ok(write_stream) => {handle_stream(read_stream, write_stream, net_sender.clone(), secret.clone());}
                                     ,Err(e) => {println!("Stream failed: {:?}", e);}
                                 }
                             }
