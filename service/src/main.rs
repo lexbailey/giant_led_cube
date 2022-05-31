@@ -653,14 +653,16 @@ fn main() {
                         let _ignored = sound_sender.send(Sound::Twist());
                         cube.twist(twist);
 
-                        let play_time_milliseconds = match game_state.game_id() {
-                            Some(_) => game_state.solve_so_far().as_millis().try_into().ok(),
-                            None => None,
-                        };
+                        let mut game_id = None;
+                        let mut play_time_milliseconds = None;
+                        if game_state.is_started() && !game_state.is_ended() {
+                            game_id = game_state.game_id();
+                            play_time_milliseconds = game_state.solve_so_far().as_millis().try_into().ok();
+                        }
                         let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
                             rotation: twist.to_string(),
                             cube_state: cube.serialise(),
-                            game_id: game_state.game_id(),
+                            game_id,
                             play_time_milliseconds,
                             timestamp: Utc::now(),
                         }));
