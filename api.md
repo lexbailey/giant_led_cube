@@ -143,4 +143,4 @@ Here is a screenshot of that diagram with colours:
 
 ![Map of cube face order](cube_faces_map.png)
 
-For some rust code that can parse and maipulate these cube states, take a look at the `cube_model` crate in this repository. The `Cube::deserialise` function takes these `cube_state` strings as input.
+For some rust code that can parse and manipulate these cube states, take a look at the `cube_model` crate in this repository. The `Cube::deserialise` function takes these `cube_state` strings as input.
