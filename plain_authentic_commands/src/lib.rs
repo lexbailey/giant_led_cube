@@ -54,6 +54,7 @@ impl<Rng: RngCore + SeedableRng + CryptoRng> GenericMessageHandler<Rng>{
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub enum ParseStatus {
     Success(String, Vec<String>)
     ,BadClient()
@@ -218,6 +219,10 @@ mod tests {
         let msg = auth.construct_message("foo ", &vec!["arg1    "]);
         let (checked_msg, salt, mac) = auth_code_parts(&msg, "foo :arg1    ,");
         assert!(auth.command_is_authentic(checked_msg, salt, mac));
+        let msg = auth.construct_reply("foo ", &vec!["arg1    "]);
+        let part = msg[1..].to_string();
+        let (checked_msg, salt, mac) = auth_code_parts(&part, "foo :arg1    ,");
+        assert!(auth.command_is_authentic(checked_msg, salt, mac));
     }
 
     #[test]
@@ -228,5 +233,24 @@ mod tests {
         let result = auth.construct_message("test", &vec!["arg1", "arg2"]);
         let expected = "test:arg1,arg2,e6a7826851ce2d9a#77bfd3c375c76352ca52e0c6324637ee728d1fae65ab65aee9f3cd9aa3529f4d\n";
         assert_eq!(&result, expected);
+    }
+
+    #[cfg(feature="challenge")]
+    #[test]
+    fn parse_messages(){
+        use crate::ParseStatus::*;
+        let authentic_msg: Vec<u8> = "set_brightness:40,1b85702adb782964#34463322ef9c36021c083fa997cbcc7a6d8515046b1fdcb9dc38f247917cff29".as_bytes().to_vec();
+        let inauthentic_msg: Vec<u8> = "set_brightness:40,1b85702adb782964#34463322ef9c36021c083fa997cbcc7a6d8515046b1fdcb9dc38f247917cff28".as_bytes().to_vec();
+        let bad_msg: Vec<u8> = b"set_brightness:\xff\x00\x00\x00\x0040,1b85702adb782964#34463322ef9c36021c083fa997cbcc7a6d8515046b1fdcb9dc38f247917cff29".to_vec();
+        let mut auth = MessageHandler::new(b"secret".to_vec());
+        auth.testing_only_update_salt("1b85702adb782964".to_string());
+        let status = auth.parse_command(&authentic_msg);
+        assert_eq!(status, Success("set_brightness".to_string(), vec!["40".to_string()]));
+        auth.testing_only_update_salt("1b85702adb782964".to_string());
+        let status = auth.parse_command(&inauthentic_msg);
+        assert_eq!(status, Unauthorised());
+        auth.testing_only_update_salt("1b85702adb782964".to_string());
+        let status = auth.parse_command(&bad_msg);
+        assert_eq!(status, BadClient());
     }
 }
