@@ -512,7 +512,6 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                         }
                                         ,"solved" => {
                                             let mut state = state.lock().unwrap();
-                                            state.cube = Cube::new();
                                             to_gui_sender.send(ToGUI::StateUpdate())?;
                                             to_gui_sender.send(ToGUI::GameEnd())?;
                                         }
