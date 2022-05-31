@@ -1,10 +1,12 @@
 use std::time::{Instant, Duration};
 use std::fmt::{self,Display};
 use std::cmp::min;
+use uuid::Uuid;
 
 #[derive(Default, Debug)]
 pub struct TimerState{
-    started: Option<Instant>
+    game_id: Option<Uuid>
+    ,started: Option<Instant>
     ,inspection_end: Option<Instant>
     ,ended: Option<Instant>
 }
@@ -33,13 +35,14 @@ fn round_ms(d: Duration) -> Duration {
 
 impl TimerState{
     pub fn reset(&mut self) {
+        self.game_id = None;
         self.started = None;
         self.inspection_end = None;
         self.ended = None;
     }
 
-    pub fn game_id(&self) -> Option<String> {
-        self.started.map(|i| format!("{:?}", i))
+    pub fn game_id(&self) -> Option<Uuid> {
+        self.game_id
     }
 
     pub fn is_inspecting(&self, t: Option<Instant>) -> bool {
@@ -86,6 +89,7 @@ impl TimerState{
     pub fn start(&mut self) -> bool {
         if self.can_start() {
             self.started = Some(Instant::now());
+            self.game_id = Some(Uuid::new_v4());
             self.inspection_end = None;
             self.ended = None;
             true
@@ -206,7 +210,8 @@ impl TimerState{
         let (s, i, e) = durs;
         let add_start = |d|Some(start+d);
         Ok(TimerState{
-            started: s.and_then(add_start)
+            game_id: None
+            ,started: s.and_then(add_start)
             ,inspection_end: i.and_then(add_start)
             ,ended: e.and_then(add_start)
         })
@@ -250,39 +255,56 @@ mod tests {
         assert!(!state.is_started());
         assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
+        assert!(state.game_id().is_none());
         // we can start the timer
         assert!(state.can_start());
         assert!(state.start());
         assert!(state.is_started());
         assert!(state.is_inspecting(None));
         assert!(!state.is_ended());
+        let first_game_id = state.game_id().expect("game id to be defined");
         // but we can't start it again yet
         assert!(!state.can_start());
         assert!(!state.start());
         assert!(state.is_started());
         assert!(state.is_inspecting(None));
         assert!(!state.is_ended());
+        assert_eq!(state.game_id().unwrap(), first_game_id);
         // after the first twist, inspection has ended
         assert!(state.is_inspecting(None));
         assert!(state.twist());
         assert!(state.is_started());
         assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
+        assert_eq!(state.game_id().unwrap(), first_game_id);
         // The next twist returns false to indicate it didn't end the inspection
         assert!(!state.twist());
         assert!(state.is_started());
         assert!(!state.is_inspecting(None));
         assert!(!state.is_ended());
+        assert_eq!(state.game_id().unwrap(), first_game_id);
         // Finally, a solve completes the timer
         assert!(state.solved());
         assert!(!state.solved()); // Can't solve the same scramble twice, needs reset between
         assert!(state.is_started());
         assert!(!state.is_inspecting(None));
         assert!(state.is_ended());
+        assert_eq!(state.game_id().unwrap(), first_game_id);
         let (start, iend, end) = state.serialise();
         assert!(&start != "X");
         assert!(&iend != "X");
         assert!(&end != "X");
+
+        // Resetting results in no game id
+        state.reset();
+        assert!(state.game_id().is_none());
+        // Starting a new game results in a new game id
+        assert!(state.can_start());
+        assert!(state.start());
+        assert!(state.is_started());
+        assert!(state.is_inspecting(None));
+        assert!(!state.is_ended());
+        assert_ne!(state.game_id().unwrap(), first_game_id);
     }
 
     #[test]

@@ -611,7 +611,7 @@ fn main() {
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()))?;
                             }
                             let _ = datapoints_sender.try_send(Datapoint::GameStart(GameStartDatapoint {
-                                game_id: game_state.game_id().unwrap(),
+                                game_id: game_state.game_id().unwrap().to_string(),
                                 cube_state: cube.serialise(),
                                 timestamp: Utc::now(),
                             }));
@@ -656,7 +656,7 @@ fn main() {
                         let mut game_id = None;
                         let mut play_time_milliseconds = None;
                         if game_state.is_started() && !game_state.is_ended() {
-                            game_id = game_state.game_id();
+                            game_id = game_state.game_id().map(|id| id.to_string());
                             play_time_milliseconds = game_state.solve_so_far().as_millis().try_into().ok();
                         }
                         let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
@@ -692,7 +692,7 @@ fn main() {
                                         }
                                     }
                                     let _ = datapoints_sender.try_send(Datapoint::GameSolve(GameSolveDatapoint {
-                                        game_id: game_state.game_id().unwrap(),
+                                        game_id: game_state.game_id().unwrap().to_string(),
                                         play_time_milliseconds: t.try_into().unwrap_or(u32::MAX),
                                         new_top_score,
                                         cube_state: cube.serialise(),
