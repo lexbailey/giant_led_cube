@@ -437,7 +437,7 @@ fn init_render_data() -> RenderData{
 
         let mut tex_size: i32 = 0;
         gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut tex_size as *mut i32);
-        let tex_size = std::cmp::min(tex_size, 1000) as usize; //shouldn't need more than this
+        let tex_size = std::cmp::min(tex_size, 2048) as usize; //shouldn't need more than this
         RenderData{
             shader: cube_shader
             ,image_shader: image_shader
@@ -725,7 +725,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 text(gfx, s,x,y,pt,(0.0,0.0,0.0));
             };
             if gfx.show_ip{
-                text(gfx, &gfx.ip, -1920.0/2.0, 540.0, 30.0, (1.0,0.0,0.0));
+                black_text(gfx, &gfx.ip, -1920.0/2.0, 540.0, 30.0);
             }
             else{
                 black_text(gfx, "Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
@@ -862,11 +862,14 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         gfx.released |= b == MouseButton::Left && s == ElementState::Released;
                     }
                     ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F7), state:s, ..}, ..} => {
+                        let already_showing = gfx.show_ip;
                         let show = s == ElementState::Pressed;
-                        if show {
-                            gfx.ip = Command::new("ip").args(["address", "show"]).output().and_then(|o|Ok(String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or("Unable to get IP details".to_string());
+                        if !(already_showing && show){
+                            if show {
+                                gfx.ip = Command::new("ip").args(["address", "show"]).output().and_then(|o|Ok(String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or("Unable to get IP details".to_string());
+                            }
+                            gfx.show_ip = show;
                         }
-                        gfx.show_ip = show;
                     }
                     ,_=>{}
                 }
