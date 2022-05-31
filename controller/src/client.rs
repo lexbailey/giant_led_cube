@@ -526,7 +526,6 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                 ){
                                                     state.timer_state = new_time;
                                                 }
-                                                println!("{:?}, {:?}", state.last_timer_update, state.timer_state);
                                                 to_gui_sender.send(ToGUI::StateUpdate());
                                             }
                                         }
@@ -640,7 +639,6 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                             break
                                         }
                                     }
-                                    println!("Twist: {:?}", twist);
                                     last_twist = twist;
                                     state.cube.twist(twist);
                                 }

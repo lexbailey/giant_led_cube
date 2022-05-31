@@ -216,11 +216,12 @@ shader_struct!{
 }
 
 struct DataModel{
-    // TODO move d, r, diff, and frames into the renderdata for the opengl version
+    // TODO move d, r, diff, and frames into renderdata
     d: f32
     ,r: f32
     ,diff: f32
     ,frames: i32
+    ,brightness: u8
 }
 
 
@@ -422,6 +423,9 @@ fn init_render_data() -> RenderData{
         let scramble_button = Button::new(left + 10.0, 240.0, 540.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
         let end_button = Button::new(left + 10.0, 100.0, 540.0,110.0, "Reset Cube".to_string(), "reset".to_string(), 80.0);
 
+        let b_minus = Button::new(left + 370.0, -240.0, 80.0,80.0, "−".to_string(), "b-".to_string(), 50.0);
+        let b_plus = Button::new(left + 470.0, -240.0, 80.0,80.0, "+".to_string(), "b+".to_string(), 50.0);
+
         let mut tex_size: i32 = 0;
         gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut tex_size as *mut i32);
         let tex_size = std::cmp::min(tex_size, 1000) as usize; //shouldn't need more than this
@@ -440,7 +444,7 @@ fn init_render_data() -> RenderData{
             ,texture: texture
             ,cur: PhysicalPosition{x:0.0,y:0.0}
             ,s_cur: PhysicalPosition{x:0.0,y:0.0}
-            ,buttons: RefCell::new(vec![scramble_button, end_button])
+            ,buttons: RefCell::new(vec![scramble_button, end_button, b_plus, b_minus])
             ,pressed: false
             ,released: false
             ,font_cache: RefCell::new(GlyphSheet::new(tex_size))
@@ -597,6 +601,11 @@ fn format_time(d:Duration) -> String {
     }
 }
 
+const MAX_BRIGHTNESS: u8 = 255;
+const B_STEP: u8 = 10;
+const MIN_BRIGHTNESS: u8 = 105;
+const DEFAULT_BRIGHTNESS: u8 = 255;
+
 fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<FromGUI>, receiver: Receiver<ToGUI>){
 
     let mut data = DataModel{
@@ -604,6 +613,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
         ,r:0.0
         ,diff: 0.0
         ,frames:0
+        ,brightness: DEFAULT_BRIGHTNESS
     };
 
     fn update(data: &mut DataModel){
@@ -703,6 +713,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             };
             black_text("Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
             black_text("⇩click to play⇩", -1920.0/2.0, 350.0, 70.0);
+            black_text("LED Brightness", -1920.0/2.0, -240.0, 50.0);
             let now = Instant::now();
 
             let timer_msg = if !state.timer_state.is_started() {
@@ -763,6 +774,24 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         ,"reset" => {
                             sender.send(CancelTimer());
                             sender.send(SetState(Cube::new()));
+                        }
+                        ,"b+" => {
+                            if data.brightness >= MAX_BRIGHTNESS - B_STEP {
+                                data.brightness = MAX_BRIGHTNESS;
+                            }
+                            else{
+                                data.brightness += B_STEP;
+                            }
+                            sender.send(SetBrightness(format!("{}", data.brightness)));
+                        }
+                        ,"b-" => {
+                            if data.brightness <= MIN_BRIGHTNESS + B_STEP {
+                                data.brightness = MIN_BRIGHTNESS;
+                            }
+                            else{
+                                data.brightness -= B_STEP;
+                            }
+                            sender.send(SetBrightness(format!("{}", data.brightness)));
                         }
                         ,_=>{}
                     }
@@ -834,6 +863,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                     ,Connected(b) => {
                         if b {
                            sender.send(FromGUI::GetState());
+                           sender.send(FromGUI::SetBrightness(format!("{}",data.brightness)));
                         }
                     }
                     ,MissingConnection() => { println!("missing connection"); }
