@@ -299,10 +299,6 @@ impl Cube{
         Cube{faces:faces}
     }
 
-    pub fn get_color(&self, f: Output) -> Colors{
-        self.faces[f.face].subfaces[f.subface].color
-    }
-
     pub fn deserialise(&mut self, data: &str) -> Result<(), &'static str> {
         if data.len() < 54{
             return Err("not enough data, incomplete cube state");
@@ -491,6 +487,8 @@ mod tests {
         c.twist(Twist{face:TOP, reverse:true});
         let text = c.serialise();
         assert_eq!(&text, "WWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYY");
+        let mut c = Cube::new();
+        assert!(c.deserialise("BOOB").is_err());
     }
 
     #[test]
@@ -549,6 +547,41 @@ mod tests {
         let superflip = "S U B2 D2 M D' M2 S U R2 D M2 U B2 U S2";
         c.twists(superflip).expect("failed to twist");
         assert_eq!(c.simple_string(), "Top:\nYBY\nRYO\nYGY\nFront:\nGYG\nRGO\nGWG\nLeft:\nRYR\nBRG\nRWR\nBack:\nBYB\nOBR\nBWB\nRight:\nOYO\nGOB\nOWO\nBottom:\nWBW\nOWR\nWGW")
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn test_twist_parse(){
+        assert!(Twist::from_string("nonsense").is_err());
+        assert!(Twist::from_string("Beeeeees").is_err());
+        assert!(Twist::from_string("").is_err());
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn test_twist_display(){
+        assert_eq!("U'".to_string(), format!("{}", Twist::from_string("U'").unwrap()));
+        assert_eq!("R".to_string(), format!("{}", Twist::from_string("R").unwrap()));
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn solve_check(){
+        let mut c = Cube::new();
+        assert!(c.is_solved());
+        c.twist(Twist::from_string("U").unwrap());
+        assert!(!c.is_solved());
+        c.twist(Twist::from_string("U'").unwrap());
+        assert!(c.is_solved());
+    }
+
+    #[cfg(not(feature="without_std"))]
+    #[test]
+    fn output_map(){
+        let out = crate::serialise_output_map(
+            &[crate::Output{face:1, subface:2};45]
+        );
+        assert_eq!("121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212".to_string(), out)
     }
 }
 
