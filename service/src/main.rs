@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 use std::thread;
-use std::sync::mpsc::{channel,sync_channel,SyncSender,Sender,Receiver,SendError};
+use std::sync::mpsc::{channel,sync_channel,Sender,Receiver,SendError};
 use std::io::{Write,Read,BufReader,BufRead};
 use std::str::FromStr;
 use std::fs::File;
@@ -12,9 +12,7 @@ extern crate pest;
 use serde::{Deserialize, Serialize};
 use cube_model::{Cube, Twist};
 use thiserror::Error;
-use std::time::{Instant, Duration};
-use std::cmp::min;
-use std::fmt::{self,Display};
+use std::time::{Duration};
 
 use game_timer::TimerState;
 use datapoints::{Datapoint, GameStartDatapoint, TwistDatapoint, GameSolveDatapoint};
@@ -95,6 +93,8 @@ enum EvStreamError {
     IO(#[from] std::io::Error)
     ,#[error("Sender Error: {0}")]
     Sender(#[from] std::sync::mpsc::SendError<Event>)
+    ,#[error("Stream Sender Error: {0}")]
+    StreamSender(#[from] std::sync::mpsc::SendError<StreamEvent>)
 }
 
 fn handle_datapoints(datapoint_receiver: Receiver<Datapoint>, datapoint_secret: String) -> std::thread::JoinHandle<()> {
@@ -151,7 +151,7 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                                 }
                                             }
                                             ,"get_state" => {
-                                                sender.send(Event::Client(ClientEvent::GetState()));
+                                                sender.send(Event::Client(ClientEvent::GetState()))?;
                                             }
                                             ,"detect" => {
                                                 if args.len() < 1{
@@ -306,11 +306,12 @@ fn persist_config(config: &CubeConfig, file: &str) {
     }
 }
 
-fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, record: u128){
+fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, record: u128) -> Result<(), SendError<StreamEvent>>{
     if let Some(sender) = gui_sender {
-        sender.send(StreamEvent::CubeState(cube));
-        sender.send(StreamEvent::RecordState(record));
+        sender.send(StreamEvent::CubeState(cube))?;
+        sender.send(StreamEvent::RecordState(record))?;
     }
+    Ok(())
 }
 
 fn main() {
@@ -355,7 +356,7 @@ fn main() {
     let (sender, receiver) = channel::<Event>();
 
     let net_sender = sender.clone();
-    let ser_sender = sender.clone();
+    //let ser_sender = sender.clone();
     let dev_sender = sender.clone();
 
     let device_name = args.device;
@@ -505,7 +506,7 @@ fn main() {
         None
     };
 
-    let serial_thread = if let Some(port) = args.serial {
+    let serial_thread = if let Some(_port) = args.serial {
         // TODO serial thread like the tcp thread
         Some(thread::spawn(||{}))
     }
@@ -530,10 +531,11 @@ fn main() {
             match ev {
                 Sound::Twist() => {
                     let n = rng.gen_range(0..11);
-                    stream_handle.play_raw(sounds[n].clone().convert_samples());
+                    // ignore sound errors, there's not much to do about them
+                    let _ignored = stream_handle.play_raw(sounds[n].clone().convert_samples());
                 }
                 ,Sound::Win() => {
-                    stream_handle.play_raw(win_sound.clone().convert_samples());
+                    let _ignored = stream_handle.play_raw(win_sound.clone().convert_samples());
                 }
                 ,Sound::NoMoreSounds() => {
                     break;
@@ -553,7 +555,7 @@ fn main() {
     for event in receiver.iter(){
         match event {
             Event::Client(c_ev) => {
-                let r: Result<(), std::io::Error> = (|c_ev|{
+                let r: Result<(), EvStreamError> = (|c_ev|{
                     match c_ev {
                         ClientEvent::SetState(state) =>{
                             match cube.deserialise(&state) {
@@ -606,7 +608,7 @@ fn main() {
                             game_state.reset();
                             game_state.start();
                             if let Some(sender) = gui_sender.as_ref(){
-                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                                sender.send(StreamEvent::SyncTimers(game_state.serialise()))?;
                             }
                             let _ = datapoints_sender.try_send(Datapoint::GameStart(GameStartDatapoint {
                                 game_id: game_state.game_id().unwrap(),
@@ -617,14 +619,14 @@ fn main() {
                         ,ClientEvent::CancelTimedGame() => {
                             game_state.reset();
                             if let Some(sender) = gui_sender.as_ref(){
-                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                                sender.send(StreamEvent::SyncTimers(game_state.serialise()))?;
                             }
                         }
                         ,ClientEvent::Connected(sender) => {
                             gui_sender = Some(sender);
                         }
                         ,ClientEvent::GetState() => {
-                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score);
+                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score)?;
                         }
                         ,ClientEvent::SetBrightness(b) => {
                             device_write.write(b"%")?;
@@ -644,10 +646,11 @@ fn main() {
                     DeviceEvent::Twist(twist) => {
                         if game_state.twist(){
                             if let Some(sender) = gui_sender.as_ref(){
-                                sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                                // Timer syc events are best-effort, ignore errors
+                                let _ignored = sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
                         }
-                        sound_sender.send(Sound::Twist());
+                        let _ignored = sound_sender.send(Sound::Twist());
                         cube.twist(twist);
 
                         let play_time_milliseconds = match game_state.game_id() {
@@ -665,14 +668,16 @@ fn main() {
                     ,DeviceEvent::Solved() => {
                         let is_win = game_state.solved();
                         if let Some(sender) = gui_sender.as_ref(){
-                            sender.send(StreamEvent::SyncTimers(game_state.serialise()));
+                            // Timer syc events are best-effort, ignore errors
+                            let _ignored = sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                         }
                         if is_win{
-                            sound_sender.send(Sound::Win());
+                            let _ignored = sound_sender.send(Sound::Win());
                             match game_state.recorded_time(){
                                 Some(time) => {
                                     if let Some(sender) = gui_sender.as_ref(){
-                                        sender.send(StreamEvent::ReportTime(time));
+                                        // TODO do I even need this event??
+                                        let _ignored = sender.send(StreamEvent::ReportTime(time));
                                     }
                                     let t = time.as_millis();
                                     let mut new_top_score = false;
@@ -681,7 +686,7 @@ fn main() {
                                         config.top_score = t;
                                         persist_config(&config, &args.config);
                                         if let Some(sender) = gui_sender.as_ref(){
-                                            sender.send(StreamEvent::RecordState(t));
+                                            let _ignored = sender.send(StreamEvent::RecordState(t));
                                         }
                                     }
                                     let _ = datapoints_sender.try_send(Datapoint::GameSolve(GameSolveDatapoint {
@@ -697,7 +702,7 @@ fn main() {
                         }
                     }
                     ,_=>{}
-                }
+                };
                 if let Some(sender) = gui_sender.as_ref(){
                     match sender.send(StreamEvent::GUI(d_ev)) {
                         Err(e) => {println!("Failed to send device event to client, client disconnected?: {:?}", e)}
