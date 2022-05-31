@@ -4,6 +4,9 @@ It's a giant LED Rubik's cube!
 
 Designed and built by some folks from York Hackspace as an installation for EMF Camp 2022.
 
+[![codecov](https://codecov.io/gh/danieljabailey/giant_led_cube/branch/main/graph/badge.svg?token=HPRY3LEJBN)](https://codecov.io/gh/danieljabailey/giant_led_cube)
+[![Test suite)](https://github.com/danieljabailey/giant_led_cube/actions/workflows/tests.yml/badge.svg)](https://github.com/danieljabailey/giant_led_cube/actions/workflows/tests.yml)
+
 ## Hardware
 
 The parts of the cube are:
