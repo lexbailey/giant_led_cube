@@ -9,6 +9,10 @@ use std::process::Command;
 use std::sync::mpsc::{channel,SendError};
 use std::thread;
 use std::str::FromStr;
+use std::path::Path;
+use std::fs::File;
+
+use serde::{Deserialize, Serialize};
 
 struct TermCols{
     white:String
@@ -117,8 +121,25 @@ fn draw(gfx: &RenderData, state: &ClientState){
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct CLIConfig{
+    server: String
+    ,secret: String
+}
 
 fn main() {
+
+    let mut config: CLIConfig= {
+        let p = Path::new("cli_config");
+        match File::open(p) {
+            Ok(f) => match serde_json::from_reader(f) {
+                Ok(d) => d
+                ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
+            }
+            ,Err(e) => {println!("Failed to load config file: {}", e); std::process::exit(1);}
+        }
+    };
+
     let gfx = init_render_data();
     use rustyline::error::ReadlineError;
     use rustyline::Editor;
@@ -141,8 +162,8 @@ fn main() {
         }
     });
 
-    let secret = b"secret".to_vec(); // TODO load from file
-    let addr = "localhost:9876".to_string(); // TODO load from tile
+    let secret = config.secret.as_bytes().to_vec();
+    let addr = config.server;
 
     let (sync_sender, sync_receiver) = channel();
 
