@@ -312,11 +312,16 @@ struct RenderData{
     ,ip: String
 }
 
-fn init_render_data() -> RenderData{
+fn init_render_data(start_fullscreen: bool) -> RenderData{
     let events_loop = glutin::event_loop::EventLoop::with_user_event();
     let window = glutin::window::WindowBuilder::new()
-        .with_title("Giant cube")
-        .with_inner_size(glutin::dpi::PhysicalSize::new(1120,630));
+        .with_title("Giant cube");
+    let window = if start_fullscreen {
+        window.with_fullscreen(Some(glutin::window::Fullscreen::Borderless(None)))
+    }
+    else{
+        window.with_inner_size(glutin::dpi::PhysicalSize::new(1120,630))
+    };
     let context = glutin::ContextBuilder::new().with_vsync(true);
     let gl_window = unsafe {
         let win = context.build_windowed(window, &events_loop).unwrap().make_current().unwrap();
@@ -916,6 +921,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
 struct GuiConfig{
     server: String
     ,secret: String
+    ,start_fullscreen: bool
 }
 
 fn main() {
@@ -931,7 +937,7 @@ fn main() {
         }
     };
 
-    let gfx = init_render_data();
+    let gfx = init_render_data(config.start_fullscreen);
 
     let (state, sender, receiver, _client) = start_client();
 
