@@ -8,13 +8,19 @@ The API is accesed via the following url:
 
     https://giant-led-cube-db.46bit.cloud
 
-To use it, send an SQL command in the post data. Examples below
+To use it, send an SQL command in the post data. Examples below.
+
+The DBMS is ClickHouse, see here for the docs: https://clickhouse.com/docs/en/intro
+
+Of particular interest will be the syntax reference for it's flavour of SQL: https://clickhouse.com/docs/en/sql-reference
 
 ## Schema
 
 We might change the schema, but we'll probably not remove things.
 
-To see the current schema you can inspect it with the following commands:
+The scheme is defined in [this file](datapoints/schema.sql)
+
+To see the current schema on the live version you can inspect it with the following commands:
 
 Get the list of tables:
 
