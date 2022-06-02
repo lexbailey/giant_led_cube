@@ -1,0 +1,32 @@
+[package]
+name = "cube-data-input"
+version = "0.1.0"
+authors = ["Miki Mokrysz <hi@46b.it>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+cfg-if = "0.1.2"
+worker = "0.0.9"
+serde = "1.0"
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["json"] }
+# Workaround for https://github.com/seanmonstar/reqwest/pull/1096
+reqwest-wasm-ext = "0.1.0"
+chrono = { version = "0.4.19", features = ["serde"] }
+twapi-reqwest = { git = "https://github.com/aoyagikouhei/twapi-reqwest-rs.git", commit = "6592cf82bb4b79e1ac7835860821ca88841155a7" }
+console_error_panic_hook = { version = "0.1.1", optional = true }
+
+# Workaround because the Cargo version uses the old rust-crypto library that
+# relies on rustc-serialize which lacks YAML support
+[patch.crates-io]
+twapi-oauth = { path = "./twapi-oauth-rs" }
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"

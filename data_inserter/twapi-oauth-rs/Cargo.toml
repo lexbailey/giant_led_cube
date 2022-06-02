@@ -1,0 +1,22 @@
+[package]
+name = "twapi-oauth"
+version = "0.1.4"
+authors = ["aoyagikouhei <aoyagi.kouhei@gmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "A simple Twitter OAuth library."
+repository = "https://github.com/aoyagikouhei/twapi-oauth-rs"
+keywords = ["twitter", "oauth"]
+categories = ["api-bindings"]
+readme = "Readme.md"
+documentation = "https://docs.rs/twapi-oauth"
+
+[dependencies]
+base64 = "^0.13"
+chrono = "^0.4"
+#rust-crypto = "^0.2"
+hmac = "0.12.1"
+rand = "0.8.5"
+getrandom = { version = "0.2", features = ["js"] }
+url = "^2.1"
+sha1 = "0.10.1"
