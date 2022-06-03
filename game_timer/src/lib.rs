@@ -100,14 +100,18 @@ impl TimerState{
     }
 
     pub fn solved(&mut self) -> bool {
-        if self.ended.is_some() {
+        if self.started.is_none() {
             false
         }
-        else {
-            self.ended = Some(Instant::now());
-            true
+        else{
+            if self.ended.is_some() {
+                false
+            }
+            else {
+                self.ended = Some(Instant::now());
+                true
+            }
         }
-        
     }
 
     pub fn duration_so_far(&self) -> Duration {
