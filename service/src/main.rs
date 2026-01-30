@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 use std::thread;
-use std::sync::mpsc::{channel,sync_channel,Sender,Receiver,SendError};
+use std::sync::mpsc::{channel,Sender,SendError};
 use std::io::{Write,Read,BufReader,BufRead};
 use std::str::FromStr;
 use std::fs::File;
@@ -12,16 +12,12 @@ extern crate pest;
 use serde::{Deserialize, Serialize};
 use cube_model::{Cube, Twist};
 use thiserror::Error;
-use std::time::{Duration};
-
 use game_timer::TimerState;
-use datapoints::{Datapoint, GameStartDatapoint, TwistDatapoint, GameSolveDatapoint};
+use std::time::Duration;
 
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
-use chrono::Utc;
-
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -42,7 +38,6 @@ struct CubeConfig{
     led_map: String
     ,input_map: String
     ,secret: String
-    ,datapoint_secret: String
     ,top_score: u128
 }
 
@@ -97,21 +92,7 @@ enum EvStreamError {
     StreamSender(#[from] std::sync::mpsc::SendError<StreamEvent>)
 }
 
-fn handle_datapoints(datapoint_receiver: Receiver<Datapoint>, datapoint_secret: String) -> std::thread::JoinHandle<()> {
-    thread::spawn(move||{
-        for datapoint in datapoint_receiver {
-            let client = reqwest::blocking::Client::new();
-            let res = client.post("https://cube-data-input.46bit.workers.dev")
-                .json(&datapoint)
-                .header("Authorization", format!("Bearer {}", datapoint_secret))
-                .timeout(Duration::from_secs(5))
-                .send();
-            if let Err(e) = res {
-                println!("Unable to send datapoints: {}", e);
-            }
-        }
-    })
-}
+
 
 fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>, secret: Vec<u8>){
     let mut auth = MessageHandler::new(secret);
@@ -344,7 +325,6 @@ fn main() {
                     "led_map": "000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758"
                     ,"input_map": "000102030405060708091011121314151617"
                     ,"secret": ""
-                    ,"datapoint_secret": ""
                     ,"top_score": 0
                 }"#
             ).unwrap()
@@ -362,9 +342,6 @@ fn main() {
     let dev_sender = sender.clone();
 
     let device_name = args.device;
-
-    let (datapoints_sender, datapoints_receiver) = sync_channel(10);
-    let datapoints_thread = handle_datapoints(datapoints_receiver, config.datapoint_secret.clone());
 
     let mut device = serialport::new(&device_name, 115200).timeout(Duration::from_secs(1)).open().expect("Failed to open cube device serial port.");
 
@@ -612,11 +589,6 @@ fn main() {
                             if let Some(sender) = gui_sender.as_ref(){
                                 sender.send(StreamEvent::SyncTimers(game_state.serialise()))?;
                             }
-                            let _ = datapoints_sender.try_send(Datapoint::GameStart(GameStartDatapoint {
-                                game_id: game_state.game_id().unwrap().to_string(),
-                                cube_state: cube.serialise(),
-                                timestamp: Utc::now(),
-                            }));
                         }
                         ,ClientEvent::CancelTimedGame() => {
                             game_state.reset();
@@ -648,26 +620,12 @@ fn main() {
                     DeviceEvent::Twist(twist) => {
                         if game_state.twist(){
                             if let Some(sender) = gui_sender.as_ref(){
-                                // Timer syc events are best-effort, ignore errors
+                                // Timer sync events are best-effort, ignore errors
                                 let _ignored = sender.send(StreamEvent::SyncTimers(game_state.serialise()));
                             }
                         }
                         let _ignored = sound_sender.send(Sound::Twist());
                         cube.twist(twist);
-
-                        let mut game_id = None;
-                        let mut play_time_milliseconds = None;
-                        if game_state.is_started() && !game_state.is_ended() {
-                            game_id = game_state.game_id().map(|id| id.to_string());
-                            play_time_milliseconds = game_state.solve_so_far().as_millis().try_into().ok();
-                        }
-                        let _ = datapoints_sender.try_send(Datapoint::Twist(TwistDatapoint {
-                            rotation: twist.to_string(),
-                            cube_state: cube.serialise(),
-                            game_id,
-                            play_time_milliseconds,
-                            timestamp: Utc::now(),
-                        }));
                     }
                     ,DeviceEvent::Solved() => {
                         let is_win = game_state.solved();
@@ -684,22 +642,13 @@ fn main() {
                                         let _ignored = sender.send(StreamEvent::ReportTime(time));
                                     }
                                     let t = time.as_millis();
-                                    let mut new_top_score = false;
                                     if (config.top_score == 0) || (t < config.top_score){
-                                        new_top_score = true;
                                         config.top_score = t;
                                         persist_config(&config, &args.config);
                                         if let Some(sender) = gui_sender.as_ref(){
                                             let _ignored = sender.send(StreamEvent::RecordState(t));
                                         }
                                     }
-                                    let _ = datapoints_sender.try_send(Datapoint::GameSolve(GameSolveDatapoint {
-                                        game_id: game_state.game_id().unwrap().to_string(),
-                                        play_time_milliseconds: t.try_into().unwrap_or(u32::MAX),
-                                        new_top_score,
-                                        cube_state: cube.serialise(),
-                                        timestamp: Utc::now(),
-                                    }));
                                 }
                                 ,_=>{}
                             }
@@ -718,7 +667,6 @@ fn main() {
     }
 
     let _ignored = device_thread.join();
-    let _ignored = datapoints_thread.join();
     if let Some(t) = tcp_thread { let _ignored = t.join(); };
     if let Some(t) = serial_thread { let _ignored = t.join(); };
     sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");

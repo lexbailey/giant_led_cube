@@ -275,7 +275,6 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
- "serde",
  "time",
  "winapi",
 ]
@@ -603,14 +602,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datapoints"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
-]
-
-[[package]]
 name = "device"
 version = "0.1.0"
 dependencies = [
@@ -844,9 +835,6 @@ dependencies = [
 [[package]]
 name = "game_timer"
 version = "0.1.0"
-dependencies = [
- "uuid",
-]
 
 [[package]]
 name = "generic-array"
@@ -2274,7 +2262,6 @@ dependencies = [
  "chrono",
  "clap 3.1.5",
  "cube_model",
- "datapoints",
  "game_timer",
  "pest",
  "plain_authentic_commands",
@@ -2670,16 +2657,6 @@ name = "utf8parse"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "936e4b492acfd135421d8dca4b1aa80a7bfc26e702ef3af710e0752684df5372"
-
-[[package]]
-name = "uuid"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93bbc61e655a4833cf400d0d15bf3649313422fa7572886ad6dab16d79886365"
-dependencies = [
- "getrandom",
- "rand",
-]
 
 [[package]]
 name = "vcpkg"
