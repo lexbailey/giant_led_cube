@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use cube_model::{Cube, Twist};
 use thiserror::Error;
 use game_timer::TimerState;
-use std::time::Duration;
-
+use std::time::{Instant,Duration};
+use serialport::SerialPort;
 use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
@@ -31,6 +31,10 @@ struct Args{
     /// Name of a serial device to use to serve the controller interface (example: --serial /dev/ttyUSB0)
     #[clap(long)]
     serial: Option<String>,
+    /// Enable jumbotron output mode
+    #[cfg(feature="output_mode_jumbotron")]
+    #[clap(long="jumbotron")]
+    jumbotron: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,6 +299,90 @@ fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, re
     Ok(())
 }
 
+enum CubeDevice{
+    PhysicalDevice{serial_port:Box<dyn SerialPort>},
+    TestDevice{sequence:Vec<Twist>, buffer: Vec<u8>, next_twist: Instant},
+}
+
+impl Read for CubeDevice{
+    fn read(&mut self, data: &mut [u8]) -> Result<usize, std::io::Error> {
+        use CubeDevice::*;
+        match self{
+            TestDevice{sequence, buffer, next_twist} => {
+                if sequence.len() <= 0 {
+                    // Generate a new sequence
+                    for _ in 0..8{
+                        sequence.push(Twist::get_random())
+                    }
+                    for i in 0..8{
+                        sequence.push(sequence[7-i].inverse())
+                    }
+                    *next_twist = Instant::now() + Duration::from_secs(15);
+                }
+                while *next_twist < Instant::now() {
+                    let next = sequence.remove(0);
+                    *next_twist = *next_twist + Duration::from_millis(500);
+                    buffer.extend_from_slice(format!("*{};\n", next).as_bytes());
+                }
+                let mut mdata = data;
+                let n = mdata.write(&buffer)?;
+                let mut newbuf = Vec::new();
+                newbuf.extend_from_slice(&buffer[n..]);
+                *buffer = newbuf;
+                Ok(n)
+            },
+            PhysicalDevice{serial_port} => {serial_port.read(data)},
+        }
+    }
+}
+
+impl Write for CubeDevice{
+    fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
+        use CubeDevice::*;
+        match self{
+            TestDevice{..} => {Ok(data.len())}, // Currently does nothing, could make this display a test output perhaps?
+            PhysicalDevice{serial_port} => {serial_port.write(data)},
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        use CubeDevice::*;
+        match self{
+            TestDevice{..} => {Ok(())}, // Does nothing on the test device
+            PhysicalDevice{serial_port} => {serial_port.flush()},
+        }
+    }
+}
+
+impl CubeDevice{
+    fn from_device_name(name: &str) -> Result<CubeDevice, ()>{
+        use CubeDevice::*;
+        if name == "testdevice" {
+            // testdevice is a special name that refers to a fake cube controller that does not display anything, but will repeatedly apply and unapply
+            // random sequences for testing purposes
+            Ok(TestDevice{ sequence: Vec::new(), buffer: Vec::new(), next_twist:Instant::now() })
+        }
+        else{
+            let result = serialport::new(name, 115200).timeout(Duration::from_secs(10)).open();
+            match result{
+                Ok(device) => Ok(PhysicalDevice{serial_port:device}),
+                Err(e) => Err(()) // TODO better error handling here
+            }
+        }
+    }
+
+    fn try_clone(&self) -> Result<CubeDevice, ()>{
+        use CubeDevice::*;
+        match self{
+            TestDevice{sequence, buffer, next_twist} => Ok(TestDevice{sequence:sequence.clone(), buffer:buffer.clone(), next_twist: *next_twist}),
+            PhysicalDevice{serial_port} => match serial_port.try_clone() {
+                Ok(cloned) => Ok(PhysicalDevice{serial_port: cloned}),
+                Err(e) => Err(()), // TODO better error handling here
+            },
+        }
+    }
+}
+
 fn main() {
     println!("Cube service");
 
@@ -343,7 +431,10 @@ fn main() {
 
     let device_name = args.device;
 
-    let mut device = serialport::new(&device_name, 115200).timeout(Duration::from_secs(1)).open().expect("Failed to open cube device serial port.");
+    let mut device = match CubeDevice::from_device_name(&device_name) {
+        Ok(device) => device,
+        Err(e) => {eprintln!("Device connection error. {:?} TODO better error message here", e); return},
+    };
 
     let mut device_write = device.try_clone().expect("Failed to split serial connection into reader and writer, unsupported platform??");
 
@@ -354,7 +445,6 @@ fn main() {
     }
 
     let device_thread = thread::spawn(move||{
-        let _ignored = device.set_timeout(Duration::from_secs(10));
         let mut switch_num: [u8;2] = [0,0];
         let mut num_pos = 0;
         let mut twist_id: [u8;2] = [0,0];
@@ -368,7 +458,7 @@ fn main() {
             let r = device.read(&mut s);
             match r {
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                ,Err(_) => {break;}
+                ,Err(e) => {println!("{:?}", e);break;}
                 ,Ok(n) => {
                     for i in 0..n{
                         let c = s[i];
@@ -409,7 +499,6 @@ fn main() {
                                     // end of twist
                                     mode = Normal;
                                     if let Ok(t) = Twist::from_bytes(&twist_id){
-                                        println!("Twist: {}", t);
                                         dev_sender.send(Event::Device(DeviceEvent::Twist(t)))?;
                                     }
                                 }

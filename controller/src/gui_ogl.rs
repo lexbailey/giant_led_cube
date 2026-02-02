@@ -725,10 +725,10 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                 }
             }
 
-            let mut text = |gfx, s, x, y, pt, col|{
+            let text = |gfx, s, x, y, pt, col|{
                 render_text(gfx, &global_transform, &win_pix_transform, s, x, y, pt, col);
             };
-            let mut black_text = |gfx, s, x, y, pt|{
+            let black_text = |gfx, s, x, y, pt|{
                 text(gfx, s,x,y,pt,(0.0,0.0,0.0));
             };
             if gfx.show_ip{
@@ -793,11 +793,11 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         use client::FromGUI::*;
                         match button.id.as_ref(){
                             "scramble" => {
-                                sender.send(StartGame());
+                                sender.send(StartGame()).unwrap();
                             }
                             ,"reset" => {
-                                sender.send(CancelTimer());
-                                sender.send(SetState(Cube::new()));
+                                sender.send(CancelTimer()).unwrap();
+                                sender.send(SetState(Cube::new())).unwrap();
                             }
                             ,"b+" => {
                                 if data.brightness >= MAX_BRIGHTNESS - B_STEP {
@@ -806,7 +806,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                                 else{
                                     data.brightness += B_STEP;
                                 }
-                                sender.send(SetBrightness(format!("{}", data.brightness)));
+                                sender.send(SetBrightness(format!("{}", data.brightness))).unwrap();
                             }
                             ,"b-" => {
                                 if data.brightness <= MIN_BRIGHTNESS + B_STEP {
@@ -815,7 +815,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                                 else{
                                     data.brightness -= B_STEP;
                                 }
-                                sender.send(SetBrightness(format!("{}", data.brightness)));
+                                sender.send(SetBrightness(format!("{}", data.brightness))).unwrap();
                             }
                             ,_=>{}
                         }
@@ -868,7 +868,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         gfx.pressed |= b == MouseButton::Left && s == ElementState::Pressed;
                         gfx.released |= b == MouseButton::Left && s == ElementState::Released;
                     }
-                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F10), state:s, ..}, ..} => {
+                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F10), ..}, ..} => {
                         println!("========================================================");
                         println!("= You have pressed F10 to exit the cube GUI.           =");
                         println!("= This probably means the cube CLI is about to start.  =");
@@ -906,8 +906,8 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                     ,GameEnd() => { println!("game end"); }
                     ,Connected(b) => {
                         if b {
-                           sender.send(FromGUI::GetState());
-                           sender.send(FromGUI::SetBrightness(format!("{}",data.brightness)));
+                           sender.send(FromGUI::GetState()).unwrap();
+                           sender.send(FromGUI::SetBrightness(format!("{}",data.brightness))).unwrap();
                         }
                     }
                     ,MissingConnection() => { println!("missing connection"); }
@@ -930,14 +930,14 @@ struct GuiConfig{
 
 fn main() {
 
-    let mut config: GuiConfig= {
+    let config: GuiConfig= {
         let p = Path::new("gui_config");
         match File::open(p) {
             Ok(f) => match serde_json::from_reader(f) {
                 Ok(d) => d
-                ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
+                ,Err(e) => {println!("Failed to parse config file {}: {}", p.display(), e); std::process::exit(1);}
             }
-            ,Err(e) => {println!("Failed to load config file: {}", e); std::process::exit(1);}
+            ,Err(e) => {println!("Failed to load config file {}: {}", p.display(), e); std::process::exit(1);}
         }
     };
 
@@ -948,6 +948,6 @@ fn main() {
     let secret = config.secret.as_bytes().to_vec();
     let addr = config.server;
 
-    sender.send(client::FromGUI::Connect(secret, addr));
+    sender.send(client::FromGUI::Connect(secret, addr)).unwrap();
     ui_loop(gfx, state, sender, receiver);
 }

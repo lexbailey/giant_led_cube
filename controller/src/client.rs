@@ -507,11 +507,12 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                         ,"cube_state" => {
                                             if args.len() >= 1{
                                                 let mut state = state.lock().unwrap();
-                                                state.cube.deserialise(&args[0]);
+                                                if let Err(e) = state.cube.deserialise(&args[0]) {
+                                                    println!("Unable to parse cube state: {:?}", e);
+                                                }
                                             }
                                         }
                                         ,"solved" => {
-                                            let mut state = state.lock().unwrap();
                                             to_gui_sender.send(ToGUI::StateUpdate())?;
                                             to_gui_sender.send(ToGUI::GameEnd())?;
                                         }
@@ -525,7 +526,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                 ){
                                                     state.timer_state = new_time;
                                                 }
-                                                to_gui_sender.send(ToGUI::StateUpdate());
+                                                to_gui_sender.send(ToGUI::StateUpdate())?;
                                             }
                                         }
                                         ,"record_time" => {
@@ -533,7 +534,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                                 let time: u128 = args[0].parse().unwrap_or(0);
                                                 let mut state = state.lock().unwrap();
                                                 state.record_time = time;
-                                                to_gui_sender.send(ToGUI::StateUpdate());
+                                                to_gui_sender.send(ToGUI::StateUpdate())?;
                                             }
                                         }
                                         ,r=>{

@@ -1,5 +1,9 @@
 #![cfg_attr(feature="without_std", no_std)]
 
+
+#[cfg(not(feature="without_std"))]
+use rand::prelude::*;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Colors{
     White, Red, Blue, Green, Yellow, Orange, Blank
@@ -227,6 +231,22 @@ impl Twist{
         Ok(seq)
     }
 
+    pub fn inverse(&self) -> Twist{
+        Twist{
+            face: self.face,
+            reverse: !self.reverse,
+        }
+    }
+
+    #[cfg(not(feature="without_std"))]
+    pub fn get_random() -> Twist{
+        let mut rng = rand::rng();
+        Twist{
+            face: rng.random_range(0..=8),
+            reverse: rng.random(),
+        }
+    }
+
 }
 
 #[cfg(not(feature="without_std"))]
@@ -249,7 +269,7 @@ impl fmt::Display for Twist{
                 ,CENTER_BT => "E"
                 ,_=>"?"
             }
-            ,if self.reverse {"'"} else {""}
+            ,if self.reverse {"'"} else {" "}
         )
     }
 }

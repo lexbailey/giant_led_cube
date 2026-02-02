@@ -129,14 +129,14 @@ struct CLIConfig{
 
 fn main() {
 
-    let mut config: CLIConfig= {
+    let config: CLIConfig= {
         let p = Path::new("cli_config");
         match File::open(p) {
             Ok(f) => match serde_json::from_reader(f) {
                 Ok(d) => d
-                ,Err(e) => {println!("Failed to parse config file: {}", e); std::process::exit(1);}
+                ,Err(e) => {println!("Failed to parse config file {}: {}", p.display(), e); std::process::exit(1);}
             }
-            ,Err(e) => {println!("Failed to load config file: {}", e); std::process::exit(1);}
+            ,Err(e) => {println!("Failed to load config file {}: {}", p.display(), e); std::process::exit(1);}
         }
     };
 
@@ -203,7 +203,21 @@ fn main() {
                     }
                     ,UserInput(command) => {
                         match command.as_ref(){
-                            "show" => {
+                            "help" => {
+                                println!("Commands:");
+                                println!("\tanim <TWIST>         - show the animation used when performing the specified twist");
+                                println!("\tbrightness <VALUE>   - set the brightness of the LEDs (value in range 0 to 255)");
+                                println!("\tdetect inputs        - start the input switch configuration sequence");
+                                println!("\tdetect leds          - start the LED configuration sequence");
+                                println!("\texit                 - quite the CLI");
+                                println!("\tmap <FACE> <SUBFACE> - map currently lit LED during LED detection sequence to face FACE and subface SUBFACE");
+                                println!("\tmap undo             - undo a step in the configuration sequence");
+                                println!("\tshow                 - show the state of the cube");
+                                println!("\tsolved               - move to the solved state");
+                                println!("\tstart                - start the game (applies a scramble too)");
+                                println!("\ttwist <TWIST>        - execute a twist on the cube. eg: \"twist U'\"");
+                            }
+                            ,"show" => {
                                 let data = state.lock().unwrap();
                                 draw(&gfx, &*data);
                             }
@@ -261,6 +275,9 @@ fn main() {
                                         }
                                     }
                                     "twist" => {
+                                        if args.len() != 1{
+                                            println!("twist requires one parameter");
+                                        }
                                         let mut data = state.lock().unwrap();
                                         match data.cube.twists(args_str){
                                             Err(msg) => {println!("Error: {}", msg)}
@@ -314,7 +331,7 @@ fn main() {
     // Current thread generates user input events
     let mut rl = Editor::<()>::new();
     let _ignored = rl.load_history(".cube_control_history");
-    loop {
+    'repl: loop {
         let readline = rl.readline("Cube Control> ");
         match readline {
             Ok(line) => {
@@ -324,7 +341,10 @@ fn main() {
                         Err(e) => {println!("Internal error: {:?}", e);}
                         ,Ok(_) => {}
                     }
-                    sync_receiver.recv().unwrap();
+                    if let Err(e) = sync_receiver.recv(){
+                        // other end disconnected, normally because of graceful exit. terminate.
+                        break 'repl
+                    }
                 }
             }
             ,Err(ReadlineError::Interrupted) => {
