@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 use std::thread;
-use std::sync::mpsc::{channel,Sender,SendError};
+use std::sync::mpsc::{channel,Sender,Receiver,SendError};
 use std::io::{Write,Read,BufReader,BufRead};
 use std::str::FromStr;
 use std::fs::File;
@@ -383,6 +383,132 @@ impl CubeDevice{
     }
 }
 
+fn device_thread_main(mut device: CubeDevice, dev_sender: Sender<Event>) {
+    let mut switch_num: [u8;2] = [0,0];
+    let mut num_pos = 0;
+    let mut twist_id: [u8;2] = [0,0];
+    let mut twist_pos = 0;
+    #[derive(Debug)]
+    enum Mode {Normal, ParseNum, ParseTwist, Debugmsg}
+    use Mode::*;
+    let mut mode = Normal;
+    loop{
+        let mut s = [0u8;50];
+        let r = device.read(&mut s);
+        match r {
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            ,Err(e) => {println!("{:?}", e);break;}
+            ,Ok(n) => {
+                for i in 0..n{
+                    let c = s[i];
+                    let r: Result<(), SendError<Event>> = (||{
+                        match (&mode, c){
+                            (Normal, b'i') => {
+                                // start of config mode switch report
+                                num_pos = 0;
+                                switch_num = [b' ',b' '];
+                                mode = ParseNum;
+                            }
+                            ,(ParseNum, b';') => {
+                                // end of config mode switch report
+                                mode = Normal;
+                                if let Ok(n) = i32::from_str(String::from_utf8_lossy(&switch_num).trim()){
+                                    println!("Raw input: {}", n);
+                                    dev_sender.send(Event::Device(DeviceEvent::Switch(n)))?;
+                                }
+                            }
+                            ,(ParseNum, d) => {
+                                if num_pos < 2{
+                                    switch_num[num_pos] = d;
+                                    num_pos += 1;
+                                }
+                                else{
+                                    mode = Normal; // malformed, ignore
+                                }
+                            }
+                            ,(Normal, b'#') => {
+                                    dev_sender.send(Event::Device(DeviceEvent::Solved()))?;
+                            }
+                            ,(Normal, b'*') => {
+                                twist_pos = 0;
+                                twist_id = [b' ',b' '];
+                                mode = ParseTwist;
+                            }
+                            ,(ParseTwist, b';') => {
+                                // end of twist
+                                mode = Normal;
+                                if let Ok(t) = Twist::from_bytes(&twist_id){
+                                    dev_sender.send(Event::Device(DeviceEvent::Twist(t)))?;
+                                }
+                            }
+                            ,(ParseTwist, d) => {
+                                if twist_pos < 2{
+                                    twist_id[twist_pos] = d;
+                                    twist_pos += 1;
+                                }
+                                else{
+                                    mode = Normal; // malformed, ignore
+                                }
+                            }
+                            ,(Normal, b'?') => {
+                                mode = Debugmsg;
+                            }
+                            ,(Debugmsg, c) => {
+                                if c == b';'{
+                                    mode = Normal;
+                                    println!("\n");
+                                }
+                                else{
+                                     print!("{}", String::from_utf8_lossy(&[c]));
+                                }
+                            }
+                            ,(Normal, _c) => {} //unknown char
+                        }
+                        Ok(())
+                    })();
+                    match r {
+                        Ok(_) => {}
+                        ,Err(e) => {println!("Unable to send device event, client disconnected? {:?}", e);}
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn sound_thread_main(sound_events: Receiver<Sound>) {
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sound_files: Vec<&[u8]> = include!("sounds.rs");
+    let sounds: Vec<Buffered<_>> = (0..11).map(|n|{
+        let file = BufReader::new(Cursor::new(sound_files[n]));
+        Decoder::new(file).unwrap().buffered()
+    }).collect();
+
+    let win_sound = Decoder::new(BufReader::new(Cursor::new(include_bytes!("../../sounds/win.wav")))).unwrap().buffered();
+
+    let mut rng = rand::thread_rng();
+    for ev in sound_events.iter() {
+        match ev {
+            Sound::Twist() => {
+                let n = rng.gen_range(0..11);
+                // ignore sound errors, there's not much to do about them
+                let _ignored = stream_handle.play_raw(sounds[n].clone().convert_samples());
+            }
+            ,Sound::Win() => {
+                let _ignored = stream_handle.play_raw(win_sound.clone().convert_samples());
+            }
+            ,Sound::NoMoreSounds() => {
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(feature="output_mode_jumbotron")]
+fn jumbotron_thread_main() {
+    println!("jumbotron output thread");
+}
+
 fn main() {
     println!("Cube service");
 
@@ -424,14 +550,12 @@ fn main() {
     let secret = config.secret.as_bytes().to_vec();
 
     let (sender, receiver) = channel::<Event>();
-
     let net_sender = sender.clone();
-    //let ser_sender = sender.clone();
     let dev_sender = sender.clone();
 
     let device_name = args.device;
 
-    let mut device = match CubeDevice::from_device_name(&device_name) {
+    let device = match CubeDevice::from_device_name(&device_name) {
         Ok(device) => device,
         Err(e) => {eprintln!("Device connection error. {:?} TODO better error message here", e); return},
     };
@@ -444,107 +568,16 @@ fn main() {
         let mut device_write = TeeWriter::new(device_write, std::io::stdout());
     }
 
-    let device_thread = thread::spawn(move||{
-        let mut switch_num: [u8;2] = [0,0];
-        let mut num_pos = 0;
-        let mut twist_id: [u8;2] = [0,0];
-        let mut twist_pos = 0;
-        #[derive(Debug)]
-        enum Mode {Normal, ParseNum, ParseTwist, Debugmsg}
-        use Mode::*;
-        let mut mode = Normal;
-        loop{
-            let mut s = [0u8;50];
-            let r = device.read(&mut s);
-            match r {
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                ,Err(e) => {println!("{:?}", e);break;}
-                ,Ok(n) => {
-                    for i in 0..n{
-                        let c = s[i];
-                        let r: Result<(), SendError<Event>> = (||{
-                            match (&mode, c){
-                                (Normal, b'i') => {
-                                    // start of config mode switch report
-                                    num_pos = 0;
-                                    switch_num = [b' ',b' '];
-                                    mode = ParseNum;
-                                }
-                                ,(ParseNum, b';') => {
-                                    // end of config mode switch report
-                                    mode = Normal;
-                                    if let Ok(n) = i32::from_str(String::from_utf8_lossy(&switch_num).trim()){
-                                        println!("Raw input: {}", n);
-                                        dev_sender.send(Event::Device(DeviceEvent::Switch(n)))?;
-                                    }
-                                }
-                                ,(ParseNum, d) => {
-                                    if num_pos < 2{
-                                        switch_num[num_pos] = d;
-                                        num_pos += 1;
-                                    }
-                                    else{
-                                        mode = Normal; // malformed, ignore
-                                    }
-                                }
-                                ,(Normal, b'#') => {
-                                        dev_sender.send(Event::Device(DeviceEvent::Solved()))?;
-                                }
-                                ,(Normal, b'*') => {
-                                    twist_pos = 0;
-                                    twist_id = [b' ',b' '];
-                                    mode = ParseTwist;
-                                }
-                                ,(ParseTwist, b';') => {
-                                    // end of twist
-                                    mode = Normal;
-                                    if let Ok(t) = Twist::from_bytes(&twist_id){
-                                        dev_sender.send(Event::Device(DeviceEvent::Twist(t)))?;
-                                    }
-                                }
-                                ,(ParseTwist, d) => {
-                                    if twist_pos < 2{
-                                        twist_id[twist_pos] = d;
-                                        twist_pos += 1;
-                                    }
-                                    else{
-                                        mode = Normal; // malformed, ignore
-                                    }
-                                }
-                                ,(Normal, b'?') => {
-                                    mode = Debugmsg;
-                                }
-                                ,(Debugmsg, c) => {
-                                    if c == b';'{
-                                        mode = Normal;
-                                        println!("\n");
-                                    }
-                                    else{
-                                         print!("{}", String::from_utf8_lossy(&[c]));
-                                    }
-                                }
-                                ,(Normal, _c) => {} //unknown char
-                            }
-                            Ok(())
-                        })();
-                        match r {
-                            Ok(_) => {}
-                            ,Err(e) => {println!("Unable to send device event, client disconnected? {:?}", e);}
-                        }
-                    }
-                }
-            }
-        }
-    });
-    match (||{
+    let device_thread = thread::spawn(move||{ device_thread_main(device, dev_sender); });
+
+    if let Err(e) = (||{
         device_write.write(format!("ca{}\r\n", config.input_map).as_bytes())?;
         device_write.write(format!("cm{}\r\n", config.led_map).as_bytes())?;
         device_write.write(b"cuWWWWWWWWWRRRRRRRRRGGGGGGGGGOOOOOOOOOBBBBBBBBBYYYYYYYYYp\r\n")?;
         device_write.flush()?;
         Result::<(), std::io::Error>::Ok(())
     })(){
-        Err(e) => {println!("Failed to initialise device: {:?}", e);}
-        ,Ok(_) => {}
+        println!("Failed to initialise device: {:?}", e);
     }
 
     let tcp_thread = if let Some(listen) = args.tcp {
@@ -583,42 +616,16 @@ fn main() {
     };
 
     let (sound_sender, sound_events) = channel::<Sound>();
+    let sound_thread = std::thread::spawn(move||{ sound_thread_main(sound_events); });
 
-    let sound_thread = std::thread::spawn(move||{
-        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        let sound_files: Vec<&[u8]> = include!("sounds.rs");
-        let sounds: Vec<Buffered<_>> = (0..11).map(|n|{
-            let file = BufReader::new(Cursor::new(sound_files[n]));
-            Decoder::new(file).unwrap().buffered()
-        }).collect();
-
-        let win_sound = Decoder::new(BufReader::new(Cursor::new(include_bytes!("../../sounds/win.wav")))).unwrap().buffered();
-
-        let mut rng = rand::thread_rng();
-        for ev in sound_events.iter() {
-            match ev {
-                Sound::Twist() => {
-                    let n = rng.gen_range(0..11);
-                    // ignore sound errors, there's not much to do about them
-                    let _ignored = stream_handle.play_raw(sounds[n].clone().convert_samples());
-                }
-                ,Sound::Win() => {
-                    let _ignored = stream_handle.play_raw(win_sound.clone().convert_samples());
-                }
-                ,Sound::NoMoreSounds() => {
-                    break;
-                }
-            }
-        }
-    });
-
+    #[cfg(feature="output_mode_jumbotron")]
+    let jumbotron_thread = if args.jumbotron{
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(); }))
+    } else { None };
 
     let mut cube = Cube::new();
-
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
-
     let mut game_state = TimerState::default();
-
 
     for event in receiver.iter(){
         match event {
@@ -756,8 +763,10 @@ fn main() {
     }
 
     let _ignored = device_thread.join();
-    if let Some(t) = tcp_thread { let _ignored = t.join(); };
-    if let Some(t) = serial_thread { let _ignored = t.join(); };
+    #[cfg(feature="output_mode_jumbotron")]
+    if let Some(t) = jumbotron_thread { let _ignored = t.join(); }
+    if let Some(t) = tcp_thread { let _ignored = t.join(); }
+    if let Some(t) = serial_thread { let _ignored = t.join(); }
     sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");
     let _ignored = sound_thread.join();
 }
