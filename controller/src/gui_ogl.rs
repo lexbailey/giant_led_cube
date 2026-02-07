@@ -1,10 +1,8 @@
 extern crate gl;
-extern crate glutin;
-
-use glutin::dpi::PhysicalPosition;
-use glutin::event::{ElementState, MouseButton};
-
+extern crate glfw;
+use glfw::{Action, Context, Key, GlfwReceiver, WindowEvent, PWindow, Glfw, MouseButton, Cursor, StandardCursor};
 use std::collections::HashMap;
+
 
 use gl::types::*;
 use std::mem;
@@ -30,8 +28,6 @@ use std::sync::{Arc,Mutex};
 use std::sync::mpsc::{Sender, Receiver};
 
 use fontdue::Font;
-
-use std::thread;
 
 use std::path::Path;
 use std::fs::File;
@@ -225,15 +221,13 @@ shader_struct!{
 struct DataModel{
     // TODO move d, r, diff, and frames into renderdata
     d: f32
+    ,dir: f32
     ,r: f32
     ,diff: f32
     ,frames: i32
     ,brightness: u8
 }
 
-
-use glutin::ContextWrapper;
-use glutin::PossiblyCurrent;
 
 #[derive(Clone)]
 struct Button{
@@ -298,12 +292,13 @@ struct RenderData{
     ,offset_subface: affine::Transform<f32>
     ,faces: Vec<affine::Transform<f32>>
     ,subfaces: Vec<affine::Transform<f32>>
-    ,window: ContextWrapper<PossiblyCurrent, glutin::window::Window>
-    ,events_loop: RefCell<Option<glutin::event_loop::EventLoop<ToGUI>>>
+    ,glfw: Glfw
+    ,window: PWindow
+    ,events_loop: GlfwReceiver<(f64, WindowEvent)>
     ,font: Font
     ,texture: u32
-    ,cur: PhysicalPosition<f64>
-    ,s_cur: PhysicalPosition<f64>
+    ,cur: (f64,f64)
+    ,s_cur: (f64,f64)
     ,pressed: bool
     ,released: bool
     ,buttons: RefCell<Vec<Button>>
@@ -313,23 +308,34 @@ struct RenderData{
 }
 
 fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> RenderData{
-    let events_loop = glutin::event_loop::EventLoop::with_user_event();
-    let window = glutin::window::WindowBuilder::new()
-        .with_title("Giant cube");
-    let window = if start_fullscreen {
-        window.with_fullscreen(Some(glutin::window::Fullscreen::Borderless(None)))
-    }
-    else{
-        let w = if start_w != 0 {start_w} else {1120};
-        let h = if start_h != 0 {start_h} else {630};
-        window.with_inner_size(glutin::dpi::PhysicalSize::new(w,h))
-    };
-    let context = glutin::ContextBuilder::new().with_vsync(true);
-    let gl_window = unsafe {
-        let win = context.build_windowed(window, &events_loop).unwrap().make_current().unwrap();
-        gl::load_with(|s| win.get_proc_address(s) as *const _);
-        win
-    };
+
+    use glfw::fail_on_errors;
+    let mut glfw = glfw::init(fail_on_errors!()).unwrap();
+
+    let w = if start_w != 0 {start_w} else {1120};
+    let h = if start_h != 0 {start_h} else {630};
+
+    let (mut window, events_loop) = glfw.with_primary_monitor(|glfw,m| {
+        glfw.create_window(w, h, "Giant Cube", 
+            if start_fullscreen {glfw::WindowMode::FullScreen(m.expect("No primary monitor"))} else {glfw::WindowMode::Windowed}
+        ).expect("Failed to create GLFW window.")
+    });
+
+    glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    #[cfg(target_os = "macos")]
+    glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+
+    gl::load_with(|s| window.get_proc_address(s).unwrap() as *const _);
+
+    // TODO vsync as config option??
+    //glfw.set_swap_interval(glfw::SwapInterval::None);
+    glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
+
+    window.set_key_polling(true);
+    window.set_framebuffer_size_polling(true);
+    window.set_cursor_pos_polling(true);
+    window.set_mouse_button_polling(true);
 
     let font = include_bytes!("../resources/MPLUSRounded1c-Regular.ttf") as &[u8];
     let font = Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
@@ -454,12 +460,13 @@ fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> Render
             ,offset_subface: offset_subface
             ,faces: face_transforms
             ,subfaces: subface_transforms
-            ,window: gl_window
-            ,events_loop: RefCell::new(Some(events_loop))
+            ,glfw
+            ,window
+            ,events_loop: events_loop
             ,font: font
             ,texture: texture
-            ,cur: PhysicalPosition{x:0.0,y:0.0}
-            ,s_cur: PhysicalPosition{x:0.0,y:0.0}
+            ,cur: (0.0,0.0)
+            ,s_cur: (0.0,0.0)
             ,buttons: RefCell::new(vec![scramble_button, end_button, b_plus, b_minus])
             ,pressed: false
             ,released: false
@@ -584,7 +591,7 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
         gfx.image_shader.u_image_geom.set(&image_geom.data);
         gfx.image_shader.u_translate.set(&image_translate.data);
-        let (cx, cy) = (gfx.s_cur.x as f32, gfx.s_cur.y as f32);
+        let (cx, cy) = (gfx.s_cur.0 as f32, gfx.s_cur.1 as f32);
         let hover = cx > x && cx < (x + width) && cy < y && cy > (y - height);
         if hover{ 
             gfx.image_shader.u_color.set(0.9,1.0,0.9, 0.0);
@@ -630,25 +637,27 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
         d:0.0
         ,r:0.0
         ,diff: 0.0
+        ,dir:1.0
         ,frames:0
         ,brightness: DEFAULT_BRIGHTNESS
     };
 
-    fn update(data: &mut DataModel){
-        data.d += data.diff;
-        data.r += data.diff.abs()/2.0;
+    fn update(data: &mut DataModel, diff: Duration){
+        data.diff = diff.as_secs_f32();
+        data.d += data.diff*0.5*data.dir;
+        data.r += data.diff*0.25;
         data.r %= 1.0;
         data.frames += 1;
-        if data.d >= 1.0 {data.diff = -0.01;}
-        if data.d <= 0.0 {data.diff = 0.01;}
+        if data.d >= 1.0 {data.dir = -1.0;}
+        if data.d <= 0.0 {data.dir = 1.0;}
     }
 
 
-    fn draw(data: &mut DataModel, mut gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>, sender: &Sender<FromGUI>){
+    fn draw(data: &mut DataModel, gfx: &mut RenderData, state: &Arc<Mutex<ClientState>>, sender: &Sender<FromGUI>){
         let state = state.lock().unwrap();
-        let sz = gfx.window.window().inner_size();
-        let ww = sz.width as f32;
-        let wh = sz.height as f32;
+        let sz = gfx.window.get_framebuffer_size();
+        let ww = sz.0 as f32;
+        let wh = sz.1 as f32;
         const RATIO: f32 = 16.0/9.0; // Y ranges from -1.0 to +1.0, X ranges from -RATIO to +RATIO
 
         let global_transform = if ww < (wh * RATIO){
@@ -671,15 +680,15 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
              2.0/FH
         };
         let win_pix_transform = Tf::scale(pscale, pscale, 1.0);
-        gfx.s_cur = PhysicalPosition{
-            x: gfx.cur.x / ww as f64 * FW as f64
-            ,y: -gfx.cur.y / wh as f64 * FH as f64
-        };
+        gfx.s_cur = (
+            gfx.cur.0 / ww as f64 * FW as f64
+            , -gfx.cur.1 / wh as f64 * FH as f64
+        );
         if ww < (wh * RATIO){
-            gfx.s_cur.y /= (ww / (wh * RATIO)) as f64;
+            gfx.s_cur.1 /= (ww / (wh * RATIO)) as f64;
         }
         else{
-            gfx.s_cur.x /= ((wh / (ww / RATIO))) as f64;
+            gfx.s_cur.0 /= ((wh / (ww / RATIO))) as f64;
         }
 
         
@@ -777,12 +786,11 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                         }
                     }
                 }
-                use glutin::window::CursorIcon;
                 if do_hover{
-                    gfx.window.window().set_cursor_icon(CursorIcon::Hand);
+                    gfx.window.set_cursor(Some(Cursor::standard(StandardCursor::Hand)));
                 }
                 else{
-                    gfx.window.window().set_cursor_icon(CursorIcon::Default);
+                    gfx.window.set_cursor(Some(Cursor::standard(StandardCursor::Arrow)));
                 }
                 for button in &mut*gfx.buttons.borrow_mut(){
                     if button.click_state == 1 && gfx.released{
@@ -825,98 +833,76 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             gfx.pressed = false;
             gfx.released = false;
         }
-        gfx.window.swap_buffers().unwrap();
+        gfx.window.swap_buffers();
     }
-
-    let target_fps = 30.0;
-    let frame_dur_ms: f32 = 1000.0/target_fps;
 
     let mut last_frame_start = Instant::now();
 
-    let frame_duration = Duration::from_millis(frame_dur_ms.floor() as u64);
-
-    use glutin::event::{Event, WindowEvent};
-    use glutin::event_loop::ControlFlow;
-    let events_loop = gfx.events_loop.take().unwrap();
-
-    let proxy = events_loop.create_proxy();
-
-    let _client_event_thread = thread::spawn(move||{
-        for ev in receiver{
-            let _ignored = proxy.send_event(ev);
-        }
-    });
-
-    events_loop.run(move |event, _win_target, cf|
-        match event {
-            Event::WindowEvent{ event: ev,..} => {
-                match ev {
-                    WindowEvent::CloseRequested => {*cf = ControlFlow::Exit;}
-                    ,WindowEvent::Resized(newsize) => {
-                        gfx.window.resize(newsize);
-                        unsafe{
-                        gl::Viewport(0,0,newsize.width as i32, newsize.height as i32);
+    while !gfx.window.should_close() {
+        // Poll for and process events
+        gfx.glfw.poll_events();
+        for (_, event) in glfw::flush_messages(&gfx.events_loop) {
+            match event {
+                glfw::WindowEvent::Key(Key::F10, _, Action::Press, _) => {
+                    println!("========================================================");
+                    println!("= You have pressed F10 to exit the cube GUI.           =");
+                    println!("= This probably means the cube CLI is about to start.  =");
+                    println!("= If this was an accident then please press CTRL-C and =");
+                    println!("= then CTRL-D to exit the CLI and return to the GUI.   =");
+                    println!("========================================================");
+                    gfx.window.set_should_close(true);
+                },
+                glfw::WindowEvent::Key(Key::F7, _, action, _) => {
+                    let already_showing = gfx.show_ip;
+                    let show = action != Action::Release;
+                    if !(already_showing && show){
+                        if show {
+                            gfx.ip = Command::new("ip").args(["address", "show"]).output().and_then(|o|Ok(String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or("Unable to get IP details".to_string());
                         }
+                        gfx.show_ip = show;
                     }
-                    ,WindowEvent::CursorMoved{ position: p,.. } => {
-                        let sz = gfx.window.window().inner_size();
-                        let ww = sz.width as f64;
-                        let wh = sz.height as f64;
-                        gfx.cur = PhysicalPosition::<f64>{x: p.x - (ww/2.0), y: p.y - (wh/2.0)};
+                },
+                glfw::WindowEvent::FramebufferSize(x,y) => {
+                    unsafe{
+                        gl::Viewport(0,0,x,y);
                     }
-                    ,WindowEvent::MouseInput{button:b, state:s, ..} => {
-                        gfx.pressed |= b == MouseButton::Left && s == ElementState::Pressed;
-                        gfx.released |= b == MouseButton::Left && s == ElementState::Released;
-                    }
-                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F10), ..}, ..} => {
-                        println!("========================================================");
-                        println!("= You have pressed F10 to exit the cube GUI.           =");
-                        println!("= This probably means the cube CLI is about to start.  =");
-                        println!("= If this was an accident then please press CTRL-C and =");
-                        println!("= then CTRL-D to exit the CLI and return to the GUI.   =");
-                        println!("========================================================");
-                        std::process::exit(0);
-                    }
-                    ,WindowEvent::KeyboardInput{input: glutin::event::KeyboardInput{virtual_keycode:Some(glutin::event::VirtualKeyCode::F7), state:s, ..}, ..} => {
-                        let already_showing = gfx.show_ip;
-                        let show = s == ElementState::Pressed;
-                        if !(already_showing && show){
-                            if show {
-                                gfx.ip = Command::new("ip").args(["address", "show"]).output().and_then(|o|Ok(String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or("Unable to get IP details".to_string());
-                            }
-                            gfx.show_ip = show;
-                        }
-                    }
-                    ,_=>{}
+                },
+                glfw::WindowEvent::CursorPos(x,y) => {
+                    let sz = gfx.window.get_framebuffer_size();
+                    let ww = sz.0 as f64;
+                    let wh = sz.1 as f64;
+                    gfx.cur = (x - (ww/2.0), y - (wh/2.0));
+                },
+
+                glfw::WindowEvent::MouseButton(button, action, _) => {
+                    gfx.pressed |= button == MouseButton::Left && action == Action::Press;
+                    gfx.released |= button == MouseButton::Left && action == Action::Release;
                 }
-            }
-            ,Event::RedrawRequested(_win) => {
-                draw(&mut data, &mut gfx, &state, &sender);
-            }
-            ,Event::RedrawEventsCleared => {
-                let start = Instant::now();
-                update(&mut data);
-                draw(&mut data, &mut gfx, &state, &sender);
-                *cf = ControlFlow::WaitUntil(last_frame_start+frame_duration); last_frame_start = start;
-            }
-            ,Event::UserEvent(client_ev) => {
-                use ToGUI::*;
-                match client_ev {
-                    StateUpdate() => { println!("state update"); }
-                    ,GameEnd() => { println!("game end"); }
-                    ,Connected(b) => {
-                        if b {
-                           sender.send(FromGUI::GetState()).unwrap();
-                           sender.send(FromGUI::SetBrightness(format!("{}",data.brightness))).unwrap();
-                        }
-                    }
-                    ,MissingConnection() => { println!("missing connection"); }
-                }
-            }
-            ,_ => {}
-        }
-    );
 
+                _ => {},
+            }
+        }
+        while let Ok(client_ev) = receiver.try_recv(){
+            use ToGUI::*;
+            match client_ev {
+                StateUpdate() => { println!("state update"); }
+                ,GameEnd() => { println!("game end"); }
+                ,Connected(b) => {
+                    println!("{}", if b {"connected"} else {"disconnected"});
+                    if b {
+                       sender.send(FromGUI::GetState()).unwrap();
+                       sender.send(FromGUI::SetBrightness(format!("{}",data.brightness))).unwrap();
+                    }
+                }
+                ,MissingConnection() => { println!("missing connection"); }
+            }
+        }
+        let now = Instant::now();
+        let delay = now - last_frame_start;
+        last_frame_start = now;
+        update(&mut data, delay);
+        draw(&mut data, &mut gfx, &state, &sender);
+    }
 }
 
 #[derive(Serialize, Deserialize)]

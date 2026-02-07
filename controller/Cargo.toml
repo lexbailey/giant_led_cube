@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-opengl = ["gl", "glutin", "gl_abstractions", "affine", "fontdue"]
+opengl = ["gl", "glfw", "gl_abstractions", "affine", "fontdue"]
 cli = ["rustyline"]
 gles = []
 
@@ -19,7 +19,7 @@ path = "src/cli.rs"
 required-features = ["cli"]
 
 [dependencies]
-glutin = { version="0.28.0", optional=true }
+glfw = { version="0.61.0", optional=true }
 gl = { version="0.14.0", optional=true }
 gl_abstractions = { path="../gl_abstractions", optional=true }
 affine = { path="../affine", optional=true }
