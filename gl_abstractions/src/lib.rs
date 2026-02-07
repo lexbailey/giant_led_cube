@@ -1,29 +1,17 @@
 use gl::types::*;
 
 #[derive(Default)]
-pub struct UniformMat4{
-    id: i32
-}
-
+pub struct UniformMat4{ id: i32 }
 #[derive(Default)]
-pub struct UniformVec2{
-    id: i32
-}
-
+pub struct UniformVec2{ id: i32 }
 #[derive(Default)]
-pub struct UniformVec3{
-    id: i32
-}
-
+pub struct UniformVec3{ id: i32 }
 #[derive(Default)]
-pub struct UniformVec4{
-    id: i32
-}
-
+pub struct UniformVec4{ id: i32 }
 #[derive(Default)]
-pub struct UniformSampler2D{
-    id: i32
-}
+pub struct UniformSampler2D{ id: i32 }
+#[derive(Default)]
+pub struct UniformF32{ id: i32 }
 
 impl UniformMat4{
     pub fn set(&self, data: &[f32;16]){
@@ -65,6 +53,14 @@ impl UniformSampler2D {
     }
 }
 
+impl UniformF32{
+    pub fn set(&self, a:f32){
+        unsafe{
+            gl::Uniform1f(self.id, a);
+        }
+    }
+}
+
 macro_rules! uni_from {
     ($u:ident) => {
         impl From<i32> for $u{
@@ -80,6 +76,7 @@ uni_from!(UniformVec2);
 uni_from!(UniformVec3);
 uni_from!(UniformVec4);
 uni_from!(UniformSampler2D);
+uni_from!(UniformF32);
 
 #[macro_export]
 macro_rules! impl_shader{
@@ -95,8 +92,8 @@ macro_rules! impl_shader{
 
                     // Vertex shader
                     let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-                    let c_str_vert = CString::new($vs.as_bytes()).unwrap();
-                    gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
+                    let c_str_vert = std::ffi::CString::new($vs.as_bytes()).unwrap();
+                    gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), std::ptr::null());
                     gl::CompileShader(vertex_shader);
 
                     // Check for shader compilation errors
@@ -117,8 +114,8 @@ macro_rules! impl_shader{
 
                     // Fragment shader
                     let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-                    let c_str_frag = CString::new($fs.as_bytes()).unwrap();
-                    gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
+                    let c_str_frag = std::ffi::CString::new($fs.as_bytes()).unwrap();
+                    gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), std::ptr::null());
                     gl::CompileShader(fragment_shader);
 
                     // Check for shader compilation errors

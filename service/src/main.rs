@@ -19,6 +19,19 @@ use rodio::{Decoder, OutputStream, source::Source, source::Buffered};
 use rand::Rng;
 use std::io::Cursor;
 
+#[cfg(feature="output_mode_jumbotron")]
+use gl::types::*;
+#[cfg(feature="output_mode_jumbotron")]
+use glfw::{Action, Context, GlfwReceiver, WindowEvent, PWindow, Glfw};
+#[cfg(feature="output_mode_jumbotron")]
+use std::{mem,ptr};
+#[cfg(feature="output_mode_jumbotron")]
+use std::ffi::c_void;
+#[cfg(feature="output_mode_jumbotron")]
+use gl_abstractions as gla;
+#[cfg(feature="output_mode_jumbotron")]
+use gla::{UniformMat4, UniformF32, shader_struct, impl_shader};
+
 #[derive(CLIParser, Debug)]
 struct Args{
     #[clap()]
@@ -37,12 +50,13 @@ struct Args{
     jumbotron: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct CubeConfig{
     led_map: String
     ,input_map: String
     ,secret: String
     ,top_score: u128
+    ,facelet_px: Option<u32>
 }
 
 enum DeviceEvent{
@@ -505,8 +519,135 @@ fn sound_thread_main(sound_events: Receiver<Sound>) {
 }
 
 #[cfg(feature="output_mode_jumbotron")]
-fn jumbotron_thread_main() {
-    println!("jumbotron output thread");
+shader_struct!{
+    Shader
+    ,r#"
+        #version 330 core
+        layout (location = 0) in vec4 aPos;
+        uniform mat4 u_screen_transform;
+        out vec2 px_pos;
+        void main() {
+            gl_Position = aPos * u_screen_transform;
+            px_pos = aPos.xy;
+        }
+        "#
+    ,r#"
+        #version 330 core
+        in vec2 px_pos;
+        uniform float u_facelet_px;
+        out vec4 FragColor;
+        void main() {
+           float fp = u_facelet_px;
+           int ix = int(floor(px_pos.x / fp));
+           int iy = int(floor(px_pos.y / fp));
+           int i = iy * 8 + ix;
+           if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*6.0) && px_pos.x < (fp*8)){
+             FragColor = vec4(0.0,i * (1.0/45.0),0.0, 1.0);
+           }
+           else{
+             FragColor = vec4(1.0,0.0,0.0, 1.0);
+           }
+        }
+        "#
+    ,{
+        // uniforms go here
+        u_screen_transform: UniformMat4,
+        u_facelet_px: UniformF32,
+    }
+}
+
+#[cfg(feature="output_mode_jumbotron")]
+fn jumbotron_thread_main(config: &CubeConfig) {
+
+    // TODO make these config options
+    let fp = config.facelet_px.unwrap_or(48);
+    // always have a 6x8 arrangement of facelets
+    let width = fp * 8;
+    let height = fp * 6;
+    const start_fullscreen: bool = false;
+
+    println!("Starting video output...");
+    use glfw::fail_on_errors;
+    let mut glfw = glfw::init(fail_on_errors!()).unwrap();
+
+    let (mut window, events) = glfw.with_primary_monitor(|glfw,m| {
+        glfw.create_window(width, height, "Jumbotron output window", 
+            if start_fullscreen {glfw::WindowMode::FullScreen(m.expect("No primary monitor"))} else {glfw::WindowMode::Windowed}
+        ).expect("Failed to create GLFW window.")
+    });
+
+    glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    #[cfg(target_os = "macos")]
+    glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+
+    gl::load_with(|s| window.get_proc_address(s).unwrap() as *const _);
+
+    // TODO vsync as config option??
+    //glfw.set_swap_interval(glfw::SwapInterval::None);
+    glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
+    window.set_framebuffer_size_polling(true);
+
+    let mut shader = Shader::new();
+
+    let vert_array: [f32;8] = [
+        0.0, 0.0,
+        width as f32, 0.0,
+        width as f32, height as f32,
+        0.0, height as f32,
+    ];
+
+    let mut vbo = 0;
+    let mut verts = 0;
+
+    unsafe{
+        gl::GenVertexArrays(1, &mut verts);
+        gl::GenBuffers(1, &mut vbo);
+
+        gl::BindVertexArray(verts);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
+            &vert_array[0] as *const f32 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+
+        // position attribute
+        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
+        gl::EnableVertexAttribArray(0);
+    }
+    
+    let mut last_frame_start = Instant::now();
+
+    while !window.should_close() {
+        // Poll for and process events
+        glfw.poll_events();
+        for (_, event) in glfw::flush_messages(&events) {
+            match event {
+                _ => {}
+            }
+        }
+        // Draw here
+        unsafe { gl::Viewport(0,0,width as i32,height as i32); }
+        shader.use_();
+        shader.u_facelet_px.set(fp as f32);
+        shader.u_screen_transform.set(&[
+            2.0/width as f32,0.0,0.0,-1.0,
+            0.0,-2.0/height as f32,0.0,1.0,
+            0.0,0.0,1.0,0.0,
+            0.0,0.0,0.0,1.0,
+        ]);
+
+        //shader.u_screen_transform.set(&[
+        //    width as f32/2.0,0.0,0.0,-(width as f32/2.0),
+        //    0.0,height as f32/2.0,0.0,-(height as f32/2.0),
+        //    0.0,0.0,1.0,0.0,
+        //    0.0,0.0,0.0,1.0,
+        //]);
+        unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
+        window.swap_buffers();
+    }
 }
 
 fn main() {
@@ -620,7 +761,8 @@ fn main() {
 
     #[cfg(feature="output_mode_jumbotron")]
     let jumbotron_thread = if args.jumbotron{
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(); }))
+        let config = config.clone();
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config); }))
     } else { None };
 
     let mut cube = Cube::new();
