@@ -14,10 +14,10 @@ jobs:
         with:
           command: test
           args: --workspace --exclude device
-        #env:
-          #CARGO_INCREMENTAL: '0'
-          #RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          #RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTFLAGS: '-Cinstrument-coverage'
+          RUSTDOCFLAGS: '-Cinstrument-coverage'
       - name: rust-grcov
         id: coverage
         uses: actions-rs/grcov@v0.1.5
