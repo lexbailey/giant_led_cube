@@ -581,7 +581,8 @@ mod tests {
     #[test]
     fn test_twist_display(){
         assert_eq!("U'".to_string(), format!("{}", Twist::from_string("U'").unwrap()));
-        assert_eq!("R".to_string(), format!("{}", Twist::from_string("R").unwrap()));
+        assert_eq!("R ".to_string(), format!("{}", Twist::from_string("R ").unwrap()));
+        assert_eq!("R ".to_string(), format!("{}", Twist::from_string("R").unwrap()));
     }
 
     #[cfg(not(feature="without_std"))]
