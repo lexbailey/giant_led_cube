@@ -30,7 +30,10 @@ use std::ffi::c_void;
 #[cfg(feature="output_mode_jumbotron")]
 use gl_abstractions as gla;
 #[cfg(feature="output_mode_jumbotron")]
-use gla::{UniformMat4, UniformF32, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, shader_struct, impl_shader};
+
+#[cfg(feature="output_mode_jumbotron")]
+use std::sync::{Arc,Mutex};
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -535,14 +538,34 @@ shader_struct!{
         #version 330 core
         in vec2 px_pos;
         uniform float u_facelet_px;
+        uniform uint u_colours[54];
+        uniform vec3 u_base_cols[6];
+        /*
+         = {
+            vec3(1.0,1.0,1.0), // white
+            vec3(1.0,0.0,0.0), // red
+            vec3(0.0,0.0,1.0), // blue
+            vec3(0.0,1.0,0.0), // green
+            vec3(1.0,1.0,0.0), // yellow
+            vec3(1.0,0.5,0.0), // orange
+        };
+        */
         out vec4 FragColor;
+
+        float bulge(float a){
+            a = (a-0.5)*2;
+            return 1-a*a;
+        }
+
         void main() {
            float fp = u_facelet_px;
            int ix = int(floor(px_pos.x / fp));
            int iy = int(floor(px_pos.y / fp));
            int i = iy * 8 + ix;
            if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*6.0) && px_pos.x < (fp*8)){
-             FragColor = vec4(0.0,i * (1.0/45.0),0.0, 1.0);
+             vec3 base = u_base_cols[u_colours[i]];
+             vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
+             FragColor = vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0);
            }
            else{
              FragColor = vec4(1.0,0.0,0.0, 1.0);
@@ -551,13 +574,28 @@ shader_struct!{
         "#
     ,{
         // uniforms go here
-        u_screen_transform: UniformMat4,
-        u_facelet_px: UniformF32,
+        u_screen_transform: UniformMat4F,
+        u_facelet_px: Uniform1F,
+        u_colours: Uniform1UIV,
+        u_base_cols: Uniform3FV,
     }
 }
 
 #[cfg(feature="output_mode_jumbotron")]
-fn jumbotron_thread_main(config: &CubeConfig) {
+fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>) {
+
+    fn colour_num(c: cube_model::Colors) -> u32{
+        use cube_model::Colors::*;
+        match c {
+            White => 0,
+            Red => 1,
+            Blue => 2,
+            Green => 3,
+            Yellow => 4,
+            Orange => 5,
+            Blank => 0,
+        }
+    }
 
     // TODO make these config options
     let fp = config.facelet_px.unwrap_or(48);
@@ -632,12 +670,29 @@ fn jumbotron_thread_main(config: &CubeConfig) {
         unsafe { gl::Viewport(0,0,width as i32,height as i32); }
         shader.use_();
         shader.u_facelet_px.set(fp as f32);
-        shader.u_screen_transform.set(&[
+        shader.u_base_cols.set(&[
+            1.0,1.0,1.0, // white
+            1.0,0.0,0.0, // red
+            0.0,0.0,1.0, // blue
+            0.0,1.0,0.0, // green
+            1.0,1.0,0.0, // yellow
+            1.0,0.5,0.0, // orange
+        ]);
+        shader.u_screen_transform.set(false,&[
             2.0/width as f32,0.0,0.0,-1.0,
             0.0,-2.0/height as f32,0.0,1.0,
             0.0,0.0,1.0,0.0,
             0.0,0.0,0.0,1.0,
         ]);
+        let cols: Vec<u32> = {
+            let cube = cube_state.lock().unwrap();
+            (0..54).map(|i|{
+                let f = i/9;
+                let s = i%9;
+                colour_num(cube.faces[f].subfaces[s].color)
+            }).collect()
+        };
+        shader.u_colours.set(cols.as_slice());
 
         //shader.u_screen_transform.set(&[
         //    width as f32/2.0,0.0,0.0,-(width as f32/2.0),
@@ -759,13 +814,15 @@ fn main() {
     let (sound_sender, sound_events) = channel::<Sound>();
     let sound_thread = std::thread::spawn(move||{ sound_thread_main(sound_events); });
 
+    let mut cube = Arc::new(Mutex::new(Cube::new()));
+
     #[cfg(feature="output_mode_jumbotron")]
     let jumbotron_thread = if args.jumbotron{
+        let cube_state = Arc::clone(&cube);
         let config = config.clone();
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config); }))
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state); }))
     } else { None };
 
-    let mut cube = Cube::new();
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
     let mut game_state = TimerState::default();
 
@@ -775,7 +832,7 @@ fn main() {
                 let r: Result<(), EvStreamError> = (|c_ev|{
                     match c_ev {
                         ClientEvent::SetState(state) =>{
-                            match cube.deserialise(&state) {
+                            match cube.lock().unwrap().deserialise(&state) {
                                 Ok(_) => {
                                     device_write.write(b"u")?;
                                     device_write.write(state.as_bytes())?;
@@ -838,7 +895,7 @@ fn main() {
                             gui_sender = Some(sender);
                         }
                         ,ClientEvent::GetState() => {
-                            send_state_to_client(gui_sender.as_ref(), cube, config.top_score)?;
+                            send_state_to_client(gui_sender.as_ref(), *cube.lock().unwrap(), config.top_score)?;
                         }
                         ,ClientEvent::SetBrightness(b) => {
                             device_write.write(b"%")?;
@@ -863,7 +920,7 @@ fn main() {
                             }
                         }
                         let _ignored = sound_sender.send(Sound::Twist());
-                        cube.twist(twist);
+                        cube.lock().unwrap().twist(twist);
                     }
                     ,DeviceEvent::Solved() => {
                         let is_win = game_state.solved();
