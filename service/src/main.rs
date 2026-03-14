@@ -334,7 +334,7 @@ impl Read for CubeDevice{
                     for i in 0..20{
                         sequence.push(sequence[19-i].inverse())
                     }
-                    *next_twist = Instant::now() + Duration::from_secs(15);
+                    *next_twist = Instant::now() + Duration::from_secs(3);
                 }
                 while *next_twist < Instant::now() {
                     let next = sequence.remove(0);
@@ -538,7 +538,9 @@ shader_struct!{
         #version 330 core
         in vec2 px_pos;
         uniform float u_facelet_px;
-        uniform uint u_colours[54];
+        uniform float u_anim_pos;
+        uniform uint u_prev_colours[54];
+        uniform uint u_cur_colours[54];
         uniform vec3 u_base_cols[6];
         /*
          = {
@@ -563,9 +565,12 @@ shader_struct!{
             int iy = int(floor(px_pos.y / fp));
             int i = iy * 9 + ix;
             if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*5) && px_pos.x < (fp*9)){
-                vec3 base = u_base_cols[u_colours[i]];
                 vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
-                FragColor = vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0);
+                vec3 prev_base = u_base_cols[u_prev_colours[i]];
+                FragColor = vec4(prev_base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0) * (1.0-u_anim_pos);
+
+                vec3 base = u_base_cols[u_cur_colours[i]];
+                FragColor += vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0) * (u_anim_pos);
             }
             else{
                 FragColor = vec4(1.0,0.0,0.0, 1.0);
@@ -575,14 +580,16 @@ shader_struct!{
     ,{
         // uniforms go here
         u_screen_transform: UniformMat4F,
+        u_anim_pos: Uniform1F,
         u_facelet_px: Uniform1F,
-        u_colours: Uniform1UIV,
+        u_prev_colours: Uniform1UIV,
+        u_cur_colours: Uniform1UIV,
         u_base_cols: Uniform3FV,
     }
 }
 
 #[cfg(feature="output_mode_jumbotron")]
-fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>) {
+fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev_cube_state: Arc<Mutex<Cube>>, last_twist: Arc<Mutex<TwistInfo>>) {
 
     fn colour_num(c: cube_model::Colors) -> u32{
         use cube_model::Colors::*;
@@ -692,7 +699,25 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>) {
                 colour_num(cube.faces[f].subfaces[s].color)
             }).collect()
         };
-        shader.u_colours.set(cols.as_slice());
+        let prev_cols: Vec<u32> = {
+            let cube = prev_cube_state.lock().unwrap();
+            (0..54).map(|i|{
+                let f = i/9;
+                let s = i%9;
+                colour_num(cube.faces[f].subfaces[s].color)
+            }).collect()
+        };
+        shader.u_prev_colours.set(prev_cols.as_slice());
+        shader.u_cur_colours.set(cols.as_slice());
+        let lt = last_twist.lock().unwrap();
+        if let Some(t) = lt.time {
+            let d = Instant::now() - t;
+            let d = ((d.as_millis() as f32)/300.0).min(1.0);
+            shader.u_anim_pos.set(d);
+        }
+        else{
+            shader.u_anim_pos.set(1.0);
+        }
 
         //shader.u_screen_transform.set(&[
         //    width as f32/2.0,0.0,0.0,-(width as f32/2.0),
@@ -703,6 +728,11 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>) {
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
         window.swap_buffers();
     }
+}
+
+struct TwistInfo{
+    twist: Option<Twist>,
+    time: Option<Instant>,
 }
 
 fn main() {
@@ -812,15 +842,19 @@ fn main() {
     };
 
     let (sound_sender, sound_events) = channel::<Sound>();
-    let sound_thread = std::thread::spawn(move||{ sound_thread_main(sound_events); });
+    //let sound_thread = std::thread::spawn(move||{ sound_thread_main(sound_events); });
 
     let mut cube = Arc::new(Mutex::new(Cube::new()));
+    let mut prev_cube = Arc::new(Mutex::new(Cube::new()));
+    let mut last_twist = Arc::new(Mutex::new(TwistInfo{twist:None, time: None}));
 
     #[cfg(feature="output_mode_jumbotron")]
     let jumbotron_thread = if args.jumbotron{
         let cube_state = Arc::clone(&cube);
+        let prev_cube_state = Arc::clone(&prev_cube);
         let config = config.clone();
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state); }))
+        let last_twist = last_twist.clone();
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist); }))
     } else { None };
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
@@ -832,12 +866,20 @@ fn main() {
                 let r: Result<(), EvStreamError> = (|c_ev|{
                     match c_ev {
                         ClientEvent::SetState(state) =>{
-                            match cube.lock().unwrap().deserialise(&state) {
+                            let mut c = cube.lock().unwrap();
+                            let mut cp = prev_cube.lock().unwrap();
+                            match c.deserialise(&state) {
                                 Ok(_) => {
                                     device_write.write(b"u")?;
                                     device_write.write(state.as_bytes())?;
                                     device_write.flush()?;
                                 }
+                                ,Err(msg) => {
+                                    println!("Unable to deserialise cube state: {}", msg);
+                                }
+                            }
+                            match cp.deserialise(&state) {
+                                Ok(_) => {}
                                 ,Err(msg) => {
                                     println!("Unable to deserialise cube state: {}", msg);
                                 }
@@ -920,7 +962,11 @@ fn main() {
                             }
                         }
                         let _ignored = sound_sender.send(Sound::Twist());
-                        cube.lock().unwrap().twist(twist);
+                        let mut c = cube.lock().unwrap();
+                        prev_cube.lock().unwrap().deserialise(&c.serialise()).unwrap();
+                        c.twist(twist);
+                        last_twist.lock().unwrap().twist = Some(twist);
+                        last_twist.lock().unwrap().time = Some(Instant::now());
                     }
                     ,DeviceEvent::Solved() => {
                         let is_win = game_state.solved();
@@ -967,5 +1013,5 @@ fn main() {
     if let Some(t) = tcp_thread { let _ignored = t.join(); }
     if let Some(t) = serial_thread { let _ignored = t.join(); }
     sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");
-    let _ignored = sound_thread.join();
+    //let _ignored = sound_thread.join();
 }
