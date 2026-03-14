@@ -13,7 +13,7 @@ use std::time::{Instant,Duration};
 use std::cell::RefCell;
 
 use gl_abstractions as gla;
-use gla::{UniformMat4, UniformVec3, UniformVec4, UniformSampler2D, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform3F, Uniform4F, UniformSampler2D, shader_struct, impl_shader};
 
 #[cfg(feature="gles")]
 use gla::UniformVec2;
@@ -63,11 +63,11 @@ shader_struct!{
         }
         "#
     ,{
-        u_face_transform: UniformMat4,
-        u_offset: UniformMat4,
-        u_transform: UniformMat4,
-        u_color: UniformVec3,
-        u_global_transform: UniformMat4,
+        u_face_transform: UniformMat4F,
+        u_offset: UniformMat4F,
+        u_transform: UniformMat4F,
+        u_color: Uniform3F,
+        u_global_transform: UniformMat4F,
     }
 }
 
@@ -113,14 +113,14 @@ shader_struct!{
         }
         "#
     ,{
-        u_color: UniformVec4,
+        u_color: Uniform4F,
         u_texture: UniformSampler2D,
-        u_image_geom: UniformMat4,
-        u_translate: UniformMat4,
-        u_global_transform: UniformMat4,
-        u_pix_transform: UniformMat4,
-        u_scale: UniformMat4,
-        u_glyph_select: UniformVec4,
+        u_image_geom: UniformMat4F,
+        u_translate: UniformMat4F,
+        u_global_transform: UniformMat4F,
+        u_pix_transform: UniformMat4F,
+        u_scale: UniformMat4F,
+        u_glyph_select: Uniform4F,
     }
 }
 
@@ -502,10 +502,10 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
         // Set up image shader data
         gfx.image_shader.u_texture.set(0);
         gfx.image_shader.u_color.set(color.0, color.1, color.2, 1.0);
-        gfx.image_shader.u_global_transform.set(&global_transform.data);
-        gfx.image_shader.u_pix_transform.set(&win_pix_transform.data);
+        gfx.image_shader.u_global_transform.set(false, &global_transform.data);
+        gfx.image_shader.u_pix_transform.set(false, &win_pix_transform.data);
         //let scale = Tf::scale(gfx.font_scale, gfx.font_scale, gfx.font_scale);
-        gfx.image_shader.u_scale.set(&win_pix_transform.data);
+        gfx.image_shader.u_scale.set(false, &win_pix_transform.data);
 
         gl::BindVertexArray(gfx.image_verts);
 
@@ -543,8 +543,8 @@ fn render_text(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf, 
             }
             let image_geom = Tf::scale(c.width as f32, c.height as f32, 0.0);
             let image_translate = Tf::translate(c.x + x, c.y + y,0.0) ;
-            gfx.image_shader.u_image_geom.set(&image_geom.data);
-            gfx.image_shader.u_translate.set(&image_translate.data);
+            gfx.image_shader.u_image_geom.set(false, &image_geom.data);
+            gfx.image_shader.u_translate.set(false, &image_translate.data);
             #[cfg(feature="gles")]{
                 gfx.image_shader.u_tex_size.set(glyphs.width as f32, glyphs.height as f32);
             }
@@ -567,16 +567,16 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         gl::ActiveTexture(gl::TEXTURE0);
         // Set up image shader data
         gfx.image_shader.u_texture.set(0);
-        gfx.image_shader.u_global_transform.set(&global_transform.data);
-        gfx.image_shader.u_pix_transform.set(&win_pix_transform.data);
-        gfx.image_shader.u_scale.set(&win_pix_transform.data);
+        gfx.image_shader.u_global_transform.set(false, &global_transform.data);
+        gfx.image_shader.u_pix_transform.set(false, &win_pix_transform.data);
+        gfx.image_shader.u_scale.set(false, &win_pix_transform.data);
 
         gl::BindVertexArray(gfx.image_verts);
 
         let image_geom = Tf::scale(width, height, 1.0);
         let image_translate = Tf::translate(x, y-height,0.0) ;
-        gfx.image_shader.u_image_geom.set(&image_geom.data);
-        gfx.image_shader.u_translate.set(&image_translate.data);
+        gfx.image_shader.u_image_geom.set(false, &image_geom.data);
+        gfx.image_shader.u_translate.set(false, &image_translate.data);
         if clicked { 
             gfx.image_shader.u_color.set(1.0,1.0,1.0, 0.0);
         }
@@ -589,8 +589,8 @@ fn render_button(gfx: &RenderData, global_transform: &Tf, win_pix_transform: &Tf
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         let image_geom = Tf::scale(width-20.0, height-20.0, 1.0);
         let image_translate = Tf::translate(x+10.0, (y-height)+10.0,0.0) ;
-        gfx.image_shader.u_image_geom.set(&image_geom.data);
-        gfx.image_shader.u_translate.set(&image_translate.data);
+        gfx.image_shader.u_image_geom.set(false, &image_geom.data);
+        gfx.image_shader.u_translate.set(false, &image_translate.data);
         let (cx, cy) = (gfx.s_cur.0 as f32, gfx.s_cur.1 as f32);
         let hover = cx > x && cx < (x + width) && cy < y && cy > (y - height);
         if hover{ 
@@ -697,18 +697,18 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             gl::ClearColor(data.d, 0.58, 0.92, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gfx.shader.use_();
-            gfx.shader.u_global_transform.set(&global_transform.data);
+            gfx.shader.u_global_transform.set(false, &global_transform.data);
             gl::BindVertexArray(gfx.cube_verts);
             let transform = Tf::rotate_xyz((3.14*2.0)/16.0, (3.14*2.0)*(data.r as f32), 0.0);
-            gfx.shader.u_transform.set(&transform.data);
+            gfx.shader.u_transform.set(false, &transform.data);
 
             if !gfx.show_ip{
                 for i in 0..5{
-                    gfx.shader.u_offset.set(&gfx.offset.data);
+                    gfx.shader.u_offset.set(false, &gfx.offset.data);
                     gfx.shader.u_color.set(0.0,0.0,0.0);
-                    gfx.shader.u_face_transform.set(&gfx.faces[i].data);
+                    gfx.shader.u_face_transform.set(false, &gfx.faces[i].data);
                     gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-                    gfx.shader.u_offset.set(&gfx.offset_subface.data);
+                    gfx.shader.u_offset.set(false, &gfx.offset_subface.data);
                     let f = &state.cube.faces[i];
                     for j in 0..9{
                         let col = f.subfaces[j].color;
@@ -722,14 +722,14 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                             cube::Colors::Blank => gfx.shader.u_color.set(0.0,0.0,0.0),
                         }
                         let sft = &gfx.subfaces[j];
-                        gfx.shader.u_face_transform.set(&((&gfx.faces[i] * sft).data));
+                        gfx.shader.u_face_transform.set(false, &((&gfx.faces[i] * sft).data));
                         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
                     }
                 }
                 gfx.shader.u_color.set(1.0,1.0,1.0);
-                gfx.shader.u_offset.set(&gfx.offset.data);
+                gfx.shader.u_offset.set(false, &gfx.offset.data);
                 for i in 0..5{
-                    gfx.shader.u_face_transform.set(&gfx.faces[i].data);
+                    gfx.shader.u_face_transform.set(false, &gfx.faces[i].data);
                     gl::DrawArrays(gl::LINE_LOOP, 0, 4);
                 }
             }

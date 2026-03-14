@@ -328,11 +328,11 @@ impl Read for CubeDevice{
             TestDevice{sequence, buffer, next_twist} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
-                    for _ in 0..8{
+                    for _ in 0..20{
                         sequence.push(Twist::get_random())
                     }
-                    for i in 0..8{
-                        sequence.push(sequence[7-i].inverse())
+                    for i in 0..20{
+                        sequence.push(sequence[19-i].inverse())
                     }
                     *next_twist = Instant::now() + Duration::from_secs(15);
                 }
@@ -554,22 +554,22 @@ shader_struct!{
 
         float bulge(float a){
             a = (a-0.5)*2;
-            return 1-a*a;
+            return 1-a*a*a*a;
         }
 
         void main() {
-           float fp = u_facelet_px;
-           int ix = int(floor(px_pos.x / fp));
-           int iy = int(floor(px_pos.y / fp));
-           int i = iy * 8 + ix;
-           if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*6.0) && px_pos.x < (fp*8)){
-             vec3 base = u_base_cols[u_colours[i]];
-             vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
-             FragColor = vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0);
-           }
-           else{
-             FragColor = vec4(1.0,0.0,0.0, 1.0);
-           }
+            float fp = u_facelet_px;
+            int ix = int(floor(px_pos.x / fp));
+            int iy = int(floor(px_pos.y / fp));
+            int i = iy * 9 + ix;
+            if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*5) && px_pos.x < (fp*9)){
+                vec3 base = u_base_cols[u_colours[i]];
+                vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
+                FragColor = vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0);
+            }
+            else{
+                FragColor = vec4(1.0,0.0,0.0, 1.0);
+            }
         }
         "#
     ,{
@@ -599,9 +599,9 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>) {
 
     // TODO make these config options
     let fp = config.facelet_px.unwrap_or(48);
-    // always have a 6x8 arrangement of facelets
-    let width = fp * 8;
-    let height = fp * 6;
+    // always have a 5x9 arrangement of facelets
+    let width = fp * 9;
+    let height = fp * 5;
     const start_fullscreen: bool = false;
 
     println!("Starting video output...");
