@@ -866,28 +866,24 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         let show_preview = true;
         if show_preview{
             preview_cube.use_();
-            let ratio = width as f32/height as f32;
-            let xscale = if winw > winh {ratio*winh as f32/winw as f32} else {1.0};
-            //let yscale = if winw > winh {1.0} else {winw as f32/(ratio*winh as f32)};
-            let yscale = if winw > winh {1.0} else {(winw as f32/ratio)/(winh as f32)};
+            let fww = winw as f32;
+            let fwh = winh as f32;
+            let fw = width as f32;
+            let fh = height as f32;
+            let ratio = fw/fh;
+            let iswide = winw > winh;
+            let xscale = ratio * if iswide {fwh/fww} else {1.0};
+            let yscale =         if iswide {1.0} else {fww/fwh};
+            let aw = fw * xscale;
+            let ah = fh * yscale;
+            let tx = (fww-aw)/(2.0*fww);
+            let ty = (fwh-ah)/(-2.0*fwh);
             preview_cube.u_screen_transform.set(false,&[
-                xscale,0.0,0.0,0.0,
-                0.0,yscale,0.0,0.0,
+                xscale,0.0,0.0,tx,
+                0.0,yscale,0.0,ty,
                 0.0,0.0,1.0,0.0,
                 0.0,0.0,0.0,1.0,
             ]);
-            //if winw > winh{ preview_cube.u_screen_transform.set(false,&[
-            //    ratio*winh as f32/winw as f32,0.0,0.0,1.0,
-            //    0.0,1.0,0.0,0.0,
-            //    0.0,0.0,1.0,0.0,
-            //    0.0,0.0,0.0,1.0,
-            //]); }
-            //else{ preview_cube.u_screen_transform.set(false,&[
-            //    1.0,0.0,0.0,0.0,
-            //    0.0,winw as f32/(ratio*winh as f32),0.0,0.0,
-            //    0.0,0.0,1.0,0.0,
-            //    0.0,0.0,0.0,1.0,
-            //]); }
             preview_cube.u_base_cols.set(&[
                 1.0,1.0,1.0, // white
                 1.0,0.0,0.0, // red
