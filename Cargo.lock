@@ -2669,6 +2669,7 @@ dependencies = [
 name = "service"
 version = "0.1.0"
 dependencies = [
+ "affine",
  "chrono",
  "clap 3.1.5",
  "cube_model",

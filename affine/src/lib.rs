@@ -2,10 +2,40 @@ use std::ops;
 use std::fmt;
 
 #[derive(Debug)]
+/**
+    A polymorphic 4x4 matrix that represents an affine transform.
+
+    `T` must be `f32`, or another type that can be converted to and from `f32`
+
+    for example:
+
+    ```
+    # use std::f32;
+    # use affine::{Transform,Vec4};
+    /* Rotate a vector by 45 degrees
+           result
+       (0.707, 0.707)
+       ^
+      /      < counterclockwise rotation by 45 degrees
+     /
+    o---->(1,0)
+          input
+    */
+    let t = Transform::rotate_xyz(0.0, 0.0, f32::consts::PI/4.0);
+    let v = Vec4::new([1.0,0.0,0.0,0.0]); // Unit vector in X axis
+        
+    assert_eq!(v.transform(&t), Vec4::new([0.70710677, 0.70710677, 0.0, 0.0]));
+    ```
+*/
+#[derive(PartialEq)]
 pub struct Transform<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> {
     pub data: [T;16]
 }
 
+/**
+    A length 4 vector that can be transformed with a [`Transform<T>`]
+*/
+#[derive(PartialEq,Debug)]
 pub struct Vec4<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> {
     pub data: [T;4]
 }
@@ -35,6 +65,13 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
 }
 
 impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> Vec4<T>{
+
+    pub fn new(data: [T;4]) -> Vec4<T>{
+        Vec4{
+            data
+        }
+    }
+
     pub fn transform(self, b: &Transform<T>) -> Vec4<T> {
         let a = self.data;
         let b = b.data;
@@ -48,6 +85,7 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
 }
 
 impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> Transform<T>{
+    /// Creates an identity matrix
     pub fn none() -> Transform<T>{
         let one = T::from(1.0);
         let zero = T::from(0.0);
@@ -59,6 +97,7 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
         ]}
     }
 
+    /// Creates a translation matrix. Translates the specified amount in x, y, and z
     pub fn translate(x:T, y:T, z:T) -> Transform<T>{
         let one = T::from(1.0);
         let zero = T::from(0.0);
@@ -70,6 +109,7 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
         ]}
     }
 
+    /// Creates a scale transform matrix, with independent scale factors in x, y, and z
     pub fn scale(x:T, y:T, z:T) -> Transform<T>{
         let one = T::from(1.0);
         let zero = T::from(0.0);
@@ -81,6 +121,20 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
         ]}
     }
 
+    /**
+        Creates a rotation matrix with the given yaw, pitch, and roll.
+        
+        X is the horizontal (left to right, pitch) axis
+        
+        Y is the front to back (roll) axis
+        
+        Z is the vertical (yaw) axis
+
+        yaw, pitch, and roll are specified in radians
+        for example: one full rotation for a `Transform<f32>` is `f32::consts::TAU`
+
+        for types `T` that are not `f32`, the value is converted to `f32` for the sine and cosine calculation, and the result is converted back to type `T`
+    */
     pub fn rotate_ypr(yaw:T, pitch:T, roll:T) -> Transform<T>{
         let one = T::from(1.0);
         let zero = T::from(0.0);
@@ -111,6 +165,7 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
         &(&yaw*&pitch)*&roll
     }
 
+    /// Synonym for [`Transform<T>::rotate_ypr()`], except that the arguments are in reverse order
     pub fn rotate_xyz(x:T, y:T, z:T) -> Transform<T>{
         Transform::rotate_ypr(z,y,x)
     }

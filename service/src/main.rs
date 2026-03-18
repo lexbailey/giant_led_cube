@@ -30,10 +30,12 @@ use std::ffi::c_void;
 #[cfg(feature="output_mode_jumbotron")]
 use gl_abstractions as gla;
 #[cfg(feature="output_mode_jumbotron")]
-use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, shader_struct, impl_shader};
 
 #[cfg(feature="output_mode_jumbotron")]
 use std::sync::{Arc,Mutex};
+#[cfg(feature="output_mode_jumbotron")]
+use affine::{Transform};
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -523,6 +525,41 @@ fn sound_thread_main(sound_events: Receiver<Sound>) {
 
 #[cfg(feature="output_mode_jumbotron")]
 shader_struct!{
+    PreviewCube 
+    ,r#"
+        #version 330 core
+        layout (location = 0) in vec4 aPos;
+        layout (location = 1) in vec4 aNorm;
+        uniform mat4 u_screen_transform;
+        uniform mat4 u_transform;
+        out float light;
+        void main() {
+            gl_Position = aPos * u_transform * u_screen_transform;
+            vec4 normal = normalize(aNorm * u_transform);
+            light = dot(vec3(normal), vec3(1.0,0.0,0.0));
+        }
+        "#
+    ,r#"
+        #version 330 core
+        in float light;
+        uniform vec3 u_base_cols[6];
+        uniform int u_cur_face;
+        out vec4 FragColor;
+        void main() {
+            FragColor = vec4((u_base_cols[u_cur_face] + vec3(light,light,light)), 1.0);
+        }
+        "#
+    ,{
+        // uniforms go here
+        u_screen_transform: UniformMat4F,
+        u_transform: UniformMat4F,
+        u_base_cols: Uniform3FV,
+        u_cur_face: Uniform1I,
+    }
+}
+
+#[cfg(feature="output_mode_jumbotron")]
+shader_struct!{
     Shader
     ,r#"
         #version 330 core
@@ -633,24 +670,31 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
     window.set_framebuffer_size_polling(true);
 
+    unsafe{
+        gl::Enable(gl::CULL_FACE);
+        gl::FrontFace(gl::CCW);
+        gl::CullFace(gl::BACK);
+        gl::Enable(gl::DEPTH_TEST);
+        gl::DepthFunc(gl::LESS);
+    }
+
     let mut shader = Shader::new();
+    let mut preview_cube = PreviewCube::new();
 
     let vert_array: [f32;8] = [
-        0.0, 0.0,
         width as f32, 0.0,
-        width as f32, height as f32,
+        0.0, 0.0,
         0.0, height as f32,
+        width as f32, height as f32,
     ];
 
     let mut vbo = 0;
     let mut verts = 0;
+    unsafe{ gl::GenVertexArrays(1, &mut verts); gl::GenBuffers(1, &mut vbo); }
+    let bind_screen_rect = ||unsafe { gl::BindVertexArray(verts); gl::BindBuffer(gl::ARRAY_BUFFER, vbo); };
 
     unsafe{
-        gl::GenVertexArrays(1, &mut verts);
-        gl::GenBuffers(1, &mut vbo);
-
-        gl::BindVertexArray(verts);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+        bind_screen_rect();
         gl::BufferData(
             gl::ARRAY_BUFFER,
             (vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
@@ -662,20 +706,118 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
         gl::EnableVertexAttribArray(0);
     }
+
+    // -------------------------------------------------
+    let facelet_vert_array: [f32;12] = [
+        -0.5, -0.5, 0.0,
+        0.5, -0.5, 0.0,
+        0.5, 0.5, 0.0,
+        -0.5, 0.5, 0.0,
+    ];
+    let facelet_norm_array: [f32;12] = [
+        0.0, 1.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 1.0, 0.0,
+    ];
+
+    let mut fl_vbo = 0;
+    let mut fl_verts = 0;
+    let mut fl_nbo = 0;
+    let mut fl_norms = 0;
+    unsafe{
+        gl::GenVertexArrays(1, &mut fl_verts);
+        gl::GenVertexArrays(1, &mut fl_norms);
+        gl::GenBuffers(1, &mut fl_vbo);
+        gl::GenBuffers(1, &mut fl_nbo);
+    }
+    let bind_cube_facelet = ||unsafe { gl::BindVertexArray(fl_verts); gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo); };
+
+    unsafe{
+        gl::BindVertexArray(fl_verts);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (facelet_vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
+            &facelet_vert_array[0] as *const f32 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+
+        // position attribute
+        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
+        gl::EnableVertexAttribArray(0);
+
+
+        // normal attribute
+        gl::BindVertexArray(fl_norms);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_nbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (facelet_norm_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
+            &facelet_norm_array[0] as *const f32 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+
+        gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
+        gl::EnableVertexAttribArray(1);
+        
+    }
+
+    // spacing
+    let sp = 1.5f32;
+
+    // Rotations to different cube faces:
+    let face_transforms = [
+        // front face
+        Transform::translate(0.0,0.0,-sp),
+        // back face
+        //Transform::translate(0.0,0.0,sp),//*&Transform::rotate_ypr(std::f32::consts::TAU/2.0,0.0,0.0),
+        &Transform::translate(0.0,0.0,sp)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/2.0,0.0),
+        // Left and right
+        &Transform::translate(sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/-4.0,0.0), 
+        &Transform::translate(-sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/4.0,0.0),
+        // Top
+        &Transform::translate(0.0,sp,0.0)*&Transform::rotate_ypr(0.0, 0.0, std::f32::consts::TAU/4.0), 
+        // No bottom face needed
+    ];
+
+    let facelet_translations: [Transform<f32>;9] = [
+        Transform::translate(-1.0,-1.0,0.0),
+        Transform::translate( 0.0,-1.0,0.0),
+        Transform::translate( 1.0,-1.0,0.0),
+        Transform::translate(-1.0, 0.0,0.0),
+        Transform::none(), // Centre
+        Transform::translate( 1.0, 0.0,0.0),
+        Transform::translate(-1.0, 1.0,0.0),
+        Transform::translate( 0.0, 1.0,0.0),
+        Transform::translate( 1.0, 1.0,0.0),
+    ];
+    // -------------------------------------------------
     
     let mut last_frame_start = Instant::now();
 
+    let start_time = Instant::now();
+
+    let mut winw = width;
+    let mut winh = height;
+
     while !window.should_close() {
+        unsafe {
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        }
         // Poll for and process events
         glfw.poll_events();
         for (_, event) in glfw::flush_messages(&events) {
+            use glfw::WindowEvent::*;
             match event {
-                _ => {}
+                FramebufferSize(w,h) => {winw = w as u32; winh = h as u32;},
+                e => {println!("{:?}",e);}
             }
         }
         // Draw here
-        unsafe { gl::Viewport(0,0,width as i32,height as i32); }
+        unsafe { gl::Viewport(0,0,winw as i32,winh as i32); }
         shader.use_();
+        bind_screen_rect();
         shader.u_facelet_px.set(fp as f32);
         shader.u_base_cols.set(&[
             1.0,1.0,1.0, // white
@@ -686,8 +828,8 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             1.0,0.5,0.0, // orange
         ]);
         shader.u_screen_transform.set(false,&[
-            2.0/width as f32,0.0,0.0,-1.0,
-            0.0,-2.0/height as f32,0.0,1.0,
+            2.0/winw as f32,0.0,0.0,-1.0,
+            0.0,-2.0/winh as f32,0.0,1.0,
             0.0,0.0,1.0,0.0,
             0.0,0.0,0.0,1.0,
         ]);
@@ -719,13 +861,58 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             shader.u_anim_pos.set(1.0);
         }
 
-        //shader.u_screen_transform.set(&[
-        //    width as f32/2.0,0.0,0.0,-(width as f32/2.0),
-        //    0.0,height as f32/2.0,0.0,-(height as f32/2.0),
-        //    0.0,0.0,1.0,0.0,
-        //    0.0,0.0,0.0,1.0,
-        //]);
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
+        
+        let show_preview = true;
+        if show_preview{
+            preview_cube.use_();
+            let ratio = width as f32/height as f32;
+            let xscale = if winw > winh {ratio*winh as f32/winw as f32} else {1.0};
+            //let yscale = if winw > winh {1.0} else {winw as f32/(ratio*winh as f32)};
+            let yscale = if winw > winh {1.0} else {(winw as f32/ratio)/(winh as f32)};
+            preview_cube.u_screen_transform.set(false,&[
+                xscale,0.0,0.0,0.0,
+                0.0,yscale,0.0,0.0,
+                0.0,0.0,1.0,0.0,
+                0.0,0.0,0.0,1.0,
+            ]);
+            //if winw > winh{ preview_cube.u_screen_transform.set(false,&[
+            //    ratio*winh as f32/winw as f32,0.0,0.0,1.0,
+            //    0.0,1.0,0.0,0.0,
+            //    0.0,0.0,1.0,0.0,
+            //    0.0,0.0,0.0,1.0,
+            //]); }
+            //else{ preview_cube.u_screen_transform.set(false,&[
+            //    1.0,0.0,0.0,0.0,
+            //    0.0,winw as f32/(ratio*winh as f32),0.0,0.0,
+            //    0.0,0.0,1.0,0.0,
+            //    0.0,0.0,0.0,1.0,
+            //]); }
+            preview_cube.u_base_cols.set(&[
+                1.0,1.0,1.0, // white
+                1.0,0.0,0.0, // red
+                0.0,0.0,1.0, // blue
+                0.0,1.0,0.0, // green
+                1.0,1.0,0.0, // yellow
+                1.0,0.5,0.0, // orange
+            ]);
+
+            bind_cube_facelet();
+            let sf = 0.3;
+            let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.6,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
+            for (i, t1) in face_transforms.iter().enumerate(){
+                preview_cube.u_cur_face.set(i.try_into().unwrap());
+                for t2 in &facelet_translations{
+                    let t = Transform::none();
+                    let t = &t * &base_trans;
+                    let t = &t * &t1;
+                    let t = &t * &t2;
+                    preview_cube.u_transform.set(false, &t.data);
+                    unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
+                }
+            }
+        }
         window.swap_buffers();
     }
 }

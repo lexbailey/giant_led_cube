@@ -8,7 +8,7 @@ authors = ["Lex Bailey"]
 
 [features]
 debug_device_stream = []
-output_mode_jumbotron = ["gl", "glfw", "gl_abstractions"]
+output_mode_jumbotron = ["gl", "glfw", "gl_abstractions", "affine"]
 
 [dependencies]
 clap = { version = "3.1.5", features = ["derive"] }
@@ -28,3 +28,4 @@ tee_readwrite = "0.1.0"
 glfw = { version="0.61.0", optional=true, default-features=false, features=["image", "log", "raw-window-handle-v0-6", "x11"] }
 gl = { version="0.14.0", optional=true }
 gl_abstractions = { path="../gl_abstractions", optional=true }
+affine = { path="../affine", optional=true }
