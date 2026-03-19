@@ -30,7 +30,7 @@ use std::ffi::c_void;
 #[cfg(feature="output_mode_jumbotron")]
 use gl_abstractions as gla;
 #[cfg(feature="output_mode_jumbotron")]
-use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, UniformSampler2D, shader_struct, impl_shader};
 
 #[cfg(feature="output_mode_jumbotron")]
 use std::sync::{Arc,Mutex};
@@ -542,17 +542,22 @@ shader_struct!{
     ,r#"
         #version 330 core
         in float light;
+        uniform sampler2D u_texture;
+        uniform mat4 u_texture_transform;
         uniform vec3 u_base_cols[6];
         uniform int u_cur_face;
         out vec4 FragColor;
         void main() {
-            FragColor = vec4((u_base_cols[u_cur_face] + vec3(light,light,light)), 1.0);
+            //FragColor = vec4((u_base_cols[u_cur_face] + vec3(light,light,light)), 1.0);
+            FragColor = texture(u_texture,(vec4(24.0,24.0,0.0,0.0)*u_texture_transform).xy);
         }
         "#
     ,{
         // uniforms go here
         u_screen_transform: UniformMat4F,
         u_transform: UniformMat4F,
+        u_texture: UniformSampler2D,
+        u_texture_transform: UniformMat4F,
         u_base_cols: Uniform3FV,
         u_cur_face: Uniform1I,
     }
@@ -590,6 +595,7 @@ shader_struct!{
         };
         */
         out vec4 FragColor;
+        layout(location=0) out vec3 tFragColor;
 
         float bulge(float a){
             a = (a-0.5)*2;
@@ -612,6 +618,7 @@ shader_struct!{
             else{
                 FragColor = vec4(1.0,0.0,0.0, 1.0);
             }
+            tFragColor = FragColor.rgb;
         }
         "#
     ,{
@@ -647,6 +654,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     let width = fp * 9;
     let height = fp * 5;
     const start_fullscreen: bool = false;
+    let show_preview = true;
 
     println!("Starting video output...");
     use glfw::fail_on_errors;
@@ -677,6 +685,10 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LESS);
     }
+
+    let mut main_buffer = 0;
+    unsafe{ gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut main_buffer); }
+    let main_buffer = main_buffer as u32;
 
     let mut shader = Shader::new();
     let mut preview_cube = PreviewCube::new();
@@ -725,6 +737,8 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     let mut fl_verts = 0;
     let mut fl_nbo = 0;
     let mut fl_norms = 0;
+    let mut cube_framebuffer = 0;
+    let mut cube_texture = 0;
     unsafe{
         gl::GenVertexArrays(1, &mut fl_verts);
         gl::GenVertexArrays(1, &mut fl_norms);
@@ -761,6 +775,15 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
         gl::EnableVertexAttribArray(1);
         
+        gl::GenFramebuffers(1, &mut cube_framebuffer);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
+        gl::GenTextures(1, &mut cube_texture);
+        gl::BindTexture(gl::TEXTURE_2D, cube_texture);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, width as i32, height as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, ptr::null());
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, cube_texture, 0);
+        gl::DrawBuffers(1, &[gl::COLOR_ATTACHMENT0] as *const u32);
     }
 
     // spacing
@@ -803,6 +826,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
 
     while !window.should_close() {
         unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
         // Poll for and process events
@@ -827,12 +851,13 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             1.0,1.0,0.0, // yellow
             1.0,0.5,0.0, // orange
         ]);
-        shader.u_screen_transform.set(false,&[
+        let screen_transform = [
             2.0/winw as f32,0.0,0.0,-1.0,
             0.0,-2.0/winh as f32,0.0,1.0,
             0.0,0.0,1.0,0.0,
             0.0,0.0,0.0,1.0,
-        ]);
+        ];
+        shader.u_screen_transform.set(false,&screen_transform);
         let cols: Vec<u32> = {
             let cube = cube_state.lock().unwrap();
             (0..54).map(|i|{
@@ -863,8 +888,14 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
 
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
         
-        let show_preview = true;
         if show_preview{
+            unsafe{
+                // turn the pixel data in the frame buffer in to a texture for the preview cube to use
+                gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
+                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); // draw frame again, to texture this time
+                gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
+            }
             preview_cube.use_();
             let fww = winw as f32;
             let fwh = winh as f32;
@@ -878,6 +909,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             let ah = fh * yscale;
             let tx = (fww-aw)/(2.0*fww);
             let ty = (fwh-ah)/(-2.0*fwh);
+            preview_cube.u_texture_transform.set(false,&screen_transform);
             preview_cube.u_screen_transform.set(false,&[
                 xscale,0.0,0.0,tx,
                 0.0,yscale,0.0,ty,
@@ -885,7 +917,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
                 0.0,0.0,0.0,1.0,
             ]);
             preview_cube.u_base_cols.set(&[
-                1.0,1.0,1.0, // white
+                0.8,0.8,0.8, // white
                 1.0,0.0,0.0, // red
                 0.0,0.0,1.0, // blue
                 0.0,1.0,0.0, // green
@@ -896,7 +928,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             bind_cube_facelet();
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
-            let base_trans = &base_trans * &Transform::rotate_xyz(0.6,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.25,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
                 for t2 in &facelet_translations{
