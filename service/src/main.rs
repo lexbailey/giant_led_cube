@@ -665,7 +665,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     let mut winw = width;
     let mut winh = height;
     if show_preview{
-        winh *= 2;
+        winh = (winh as f32 * 2.5) as u32;
     }
     const start_fullscreen: bool = false;
 
@@ -942,6 +942,8 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
                 // back to normal render settings
                 gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
                 gl::Viewport(0,0,winw as i32,winh as i32);
+                // always be in front of the previous rendering
+                gl::Clear(gl::DEPTH_BUFFER_BIT);
             }
             preview_cube.use_();
             let fww = winw as f32;
@@ -952,10 +954,10 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             let iswide = winw > winh;
             let xscale = ratio * if iswide {fwh/fww} else {1.0};
             let yscale =         if iswide {1.0} else {fww/fwh};
-            let aw = fw * xscale;
-            let ah = fh * yscale;
-            let tx = (fww-aw)/(2.0*fww);
-            let ty = (fwh-ah)/(-2.0*fwh);
+            let aw = fww * xscale / ratio;
+            let ah = fwh * yscale;
+            let tx = (fww-aw)/(1.0*fww);
+            let ty = (fwh-ah)/(-1.0*fwh);
             let texture_transform = [
                 1.0/nw as f32,0.0,0.0,0.0,
                 0.0,1.0/nh as f32,0.0,0.0,
@@ -981,7 +983,8 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             bind_cube_facelet();
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
-            let base_trans = &base_trans * &Transform::rotate_xyz(0.25,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
                 for (j, t2) in facelet_translations.iter().enumerate(){
