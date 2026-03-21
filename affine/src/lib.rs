@@ -85,6 +85,12 @@ impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + Fr
 }
 
 impl<T: Copy + ops::Neg<Output=T> + ops::Add<Output=T> + ops::Mul<Output=T> + From<f32> + Into<f32> + fmt::Display> Transform<T>{
+
+    /// Create a new Transform from the raw matrix data (rather than building it from a transform operation)
+    pub fn new(data:[T;16]) -> Transform<T>{
+        Transform{ data }
+    }
+
     /// Creates an identity matrix
     pub fn none() -> Transform<T>{
         let one = T::from(1.0);

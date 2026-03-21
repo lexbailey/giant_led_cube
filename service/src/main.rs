@@ -30,12 +30,12 @@ use std::ffi::c_void;
 #[cfg(feature="output_mode_jumbotron")]
 use gl_abstractions as gla;
 #[cfg(feature="output_mode_jumbotron")]
-use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, UniformSampler2D, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, Uniform2F, UniformSampler2D, shader_struct, impl_shader};
 
 #[cfg(feature="output_mode_jumbotron")]
 use std::sync::{Arc,Mutex};
 #[cfg(feature="output_mode_jumbotron")]
-use affine::{Transform};
+use affine::{Transform,Vec4};
 
 #[derive(CLIParser, Debug)]
 struct Args{
@@ -530,26 +530,31 @@ shader_struct!{
         #version 330 core
         layout (location = 0) in vec4 aPos;
         layout (location = 1) in vec4 aNorm;
+        layout (location = 2) in vec2 aUV;
         uniform mat4 u_screen_transform;
         uniform mat4 u_transform;
         out float light;
+        out vec2 UV;
         void main() {
             gl_Position = aPos * u_transform * u_screen_transform;
             vec4 normal = normalize(aNorm * u_transform);
             light = dot(vec3(normal), vec3(1.0,0.0,0.0));
+            UV = aUV;
         }
         "#
     ,r#"
         #version 330 core
         in float light;
+        in vec2 UV;
         uniform sampler2D u_texture;
         uniform mat4 u_texture_transform;
         uniform vec3 u_base_cols[6];
         uniform int u_cur_face;
+        uniform vec2 u_facelet_coords;
         out vec4 FragColor;
         void main() {
-            //FragColor = vec4((u_base_cols[u_cur_face] + vec3(light,light,light)), 1.0);
-            FragColor = texture(u_texture,(vec4(24.0,24.0,0.0,0.0)*u_texture_transform).xy);
+            vec2 tc = (vec4(u_facelet_coords.xy+UV,0.0,0.0)*u_texture_transform).xy;
+            FragColor = texture(u_texture,tc);
         }
         "#
     ,{
@@ -560,6 +565,7 @@ shader_struct!{
         u_texture_transform: UniformMat4F,
         u_base_cols: Uniform3FV,
         u_cur_face: Uniform1I,
+        u_facelet_coords: Uniform2F,
     }
 }
 
@@ -651,17 +657,24 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     // TODO make these config options
     let fp = config.facelet_px.unwrap_or(48);
     // always have a 5x9 arrangement of facelets
-    let width = fp * 9;
-    let height = fp * 5;
-    const start_fullscreen: bool = false;
     let show_preview = true;
+    let nw = 9;
+    let nh = 5;
+    let width = fp * nw;
+    let height = fp * nh;
+    let mut winw = width;
+    let mut winh = height;
+    if show_preview{
+        winh *= 2;
+    }
+    const start_fullscreen: bool = false;
 
     println!("Starting video output...");
     use glfw::fail_on_errors;
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
 
     let (mut window, events) = glfw.with_primary_monitor(|glfw,m| {
-        glfw.create_window(width, height, "Jumbotron output window", 
+        glfw.create_window(winw, winh, "Jumbotron output window", 
             if start_fullscreen {glfw::WindowMode::FullScreen(m.expect("No primary monitor"))} else {glfw::WindowMode::Windowed}
         ).expect("Failed to create GLFW window.")
     });
@@ -732,23 +745,42 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         0.0, 1.0, 0.0,
         0.0, 1.0, 0.0,
     ];
+    let facelet_uv_array: [f32;8] = [
+        0.0,0.0,
+        0.0,1.0,
+        1.0,1.0,
+        1.0,0.0,
+    ];
 
     let mut fl_vbo = 0;
     let mut fl_verts = 0;
     let mut fl_nbo = 0;
     let mut fl_norms = 0;
+    let mut fl_uvbo = 0;
+    let mut fl_uvs = 0;
     let mut cube_framebuffer = 0;
     let mut cube_texture = 0;
     unsafe{
         gl::GenVertexArrays(1, &mut fl_verts);
-        gl::GenVertexArrays(1, &mut fl_norms);
+        //gl::GenVertexArrays(1, &mut fl_norms);
+        //gl::GenVertexArrays(1, &mut fl_uvs);
         gl::GenBuffers(1, &mut fl_vbo);
         gl::GenBuffers(1, &mut fl_nbo);
+        gl::GenBuffers(1, &mut fl_uvbo);
     }
-    let bind_cube_facelet = ||unsafe { gl::BindVertexArray(fl_verts); gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo); };
+    let bind_cube_facelet = ||unsafe {
+        gl::BindVertexArray(fl_verts);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo);
+        //gl::BindVertexArray(fl_norms);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_nbo);
+        //gl::BindVertexArray(fl_uvs);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_uvbo);
+    };
 
     unsafe{
         gl::BindVertexArray(fl_verts);
+        // position attribute
+        gl::EnableVertexAttribArray(0);
         gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo);
         gl::BufferData(
             gl::ARRAY_BUFFER,
@@ -756,14 +788,11 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             &facelet_vert_array[0] as *const f32 as *const c_void,
             gl::STATIC_DRAW,
         );
-
-        // position attribute
         gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
-        gl::EnableVertexAttribArray(0);
 
 
         // normal attribute
-        gl::BindVertexArray(fl_norms);
+        gl::EnableVertexAttribArray(1);
         gl::BindBuffer(gl::ARRAY_BUFFER, fl_nbo);
         gl::BufferData(
             gl::ARRAY_BUFFER,
@@ -771,9 +800,18 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             &facelet_norm_array[0] as *const f32 as *const c_void,
             gl::STATIC_DRAW,
         );
-
         gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
-        gl::EnableVertexAttribArray(1);
+
+        // uv attribute
+        gl::EnableVertexAttribArray(2);
+        gl::BindBuffer(gl::ARRAY_BUFFER, fl_uvbo);
+        gl::BufferData(
+            gl::ARRAY_BUFFER,
+            (facelet_uv_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
+            &facelet_uv_array[0] as *const f32 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+        gl::VertexAttribPointer(2, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
         
         gl::GenFramebuffers(1, &mut cube_framebuffer);
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
@@ -821,8 +859,6 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
 
     let start_time = Instant::now();
 
-    let mut winw = width;
-    let mut winh = height;
 
     while !window.should_close() {
         unsafe {
@@ -889,12 +925,23 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
         
         if show_preview{
+
             unsafe{
                 // turn the pixel data in the frame buffer in to a texture for the preview cube to use
                 gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                gl::Viewport(0,0,width as i32,height as i32);
+                let tex_screen_transform = [
+                    2.0/width as f32,0.0,0.0,-1.0,
+                    0.0,-2.0/height as f32,0.0,1.0,
+                    0.0,0.0,1.0,0.0,
+                    0.0,0.0,0.0,1.0,
+                ];
+                shader.u_screen_transform.set(false,&tex_screen_transform);
                 gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); // draw frame again, to texture this time
+                // back to normal render settings
                 gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
+                gl::Viewport(0,0,winw as i32,winh as i32);
             }
             preview_cube.use_();
             let fww = winw as f32;
@@ -909,7 +956,13 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             let ah = fh * yscale;
             let tx = (fww-aw)/(2.0*fww);
             let ty = (fwh-ah)/(-2.0*fwh);
-            preview_cube.u_texture_transform.set(false,&screen_transform);
+            let texture_transform = [
+                1.0/nw as f32,0.0,0.0,0.0,
+                0.0,1.0/nh as f32,0.0,0.0,
+                0.0,0.0,1.0,0.0,
+                0.0,0.0,0.0,1.0,
+            ];
+            preview_cube.u_texture_transform.set(false,&texture_transform);
             preview_cube.u_screen_transform.set(false,&[
                 xscale,0.0,0.0,tx,
                 0.0,yscale,0.0,ty,
@@ -931,12 +984,15 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             let base_trans = &base_trans * &Transform::rotate_xyz(0.25,(Instant::now()-start_time).as_millis() as f32 / 3000.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
-                for t2 in &facelet_translations{
+                for (j, t2) in facelet_translations.iter().enumerate(){
                     let t = Transform::none();
                     let t = &t * &base_trans;
                     let t = &t * &t1;
                     let t = &t * &t2;
                     preview_cube.u_transform.set(false, &t.data);
+                    let fx = j as f32;
+                    let fy = i as f32;
+                    preview_cube.u_facelet_coords.set(fx,fy);
                     unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
                 }
             }
