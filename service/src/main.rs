@@ -321,6 +321,7 @@ fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, re
 enum CubeDevice{
     PhysicalDevice{serial_port:Box<dyn SerialPort>},
     TestDevice{sequence:Vec<Twist>, buffer: Vec<u8>, next_twist: Instant},
+    IdleDevice(),
 }
 
 impl Read for CubeDevice{
@@ -351,6 +352,7 @@ impl Read for CubeDevice{
                 Ok(n)
             },
             PhysicalDevice{serial_port} => {serial_port.read(data)},
+            IdleDevice() => {Ok(0)},
         }
     }
 }
@@ -360,6 +362,7 @@ impl Write for CubeDevice{
         use CubeDevice::*;
         match self{
             TestDevice{..} => {Ok(data.len())}, // Currently does nothing, could make this display a test output perhaps?
+            IdleDevice{..} => {Ok(data.len())},
             PhysicalDevice{serial_port} => {serial_port.write(data)},
         }
     }
@@ -368,6 +371,7 @@ impl Write for CubeDevice{
         use CubeDevice::*;
         match self{
             TestDevice{..} => {Ok(())}, // Does nothing on the test device
+            IdleDevice{..} => {Ok(())},
             PhysicalDevice{serial_port} => {serial_port.flush()},
         }
     }
@@ -380,6 +384,11 @@ impl CubeDevice{
             // testdevice is a special name that refers to a fake cube controller that does not display anything, but will repeatedly apply and unapply
             // random sequences for testing purposes
             Ok(TestDevice{ sequence: Vec::new(), buffer: Vec::new(), next_twist:Instant::now() })
+        }
+        else if name == "idledevice" {
+            // testdevice is a special name that refers to a fake cube controller that does not display anything, but will repeatedly apply and unapply
+            // random sequences for testing purposes
+            Ok(IdleDevice())
         }
         else{
             let result = serialport::new(name, 115200).timeout(Duration::from_secs(10)).open();
@@ -394,6 +403,7 @@ impl CubeDevice{
         use CubeDevice::*;
         match self{
             TestDevice{sequence, buffer, next_twist} => Ok(TestDevice{sequence:sequence.clone(), buffer:buffer.clone(), next_twist: *next_twist}),
+            IdleDevice() => Ok(IdleDevice()),
             PhysicalDevice{serial_port} => match serial_port.try_clone() {
                 Ok(cloned) => Ok(PhysicalDevice{serial_port: cloned}),
                 Err(e) => Err(()), // TODO better error handling here
@@ -752,29 +762,20 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
         1.0,0.0,
     ];
 
-    let mut fl_vbo = 0;
     let mut fl_verts = 0;
+    let mut fl_vbo = 0;
     let mut fl_nbo = 0;
-    let mut fl_norms = 0;
     let mut fl_uvbo = 0;
-    let mut fl_uvs = 0;
     let mut cube_framebuffer = 0;
     let mut cube_texture = 0;
     unsafe{
         gl::GenVertexArrays(1, &mut fl_verts);
-        //gl::GenVertexArrays(1, &mut fl_norms);
-        //gl::GenVertexArrays(1, &mut fl_uvs);
         gl::GenBuffers(1, &mut fl_vbo);
         gl::GenBuffers(1, &mut fl_nbo);
         gl::GenBuffers(1, &mut fl_uvbo);
     }
     let bind_cube_facelet = ||unsafe {
         gl::BindVertexArray(fl_verts);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo);
-        //gl::BindVertexArray(fl_norms);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_nbo);
-        //gl::BindVertexArray(fl_uvs);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_uvbo);
     };
 
     unsafe{
@@ -828,18 +829,14 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
     let sp = 1.5f32;
 
     // Rotations to different cube faces:
+    //white red green orange blue
+    //top left back right front
     let face_transforms = [
-        // front face
-        Transform::translate(0.0,0.0,-sp),
-        // back face
-        //Transform::translate(0.0,0.0,sp),//*&Transform::rotate_ypr(std::f32::consts::TAU/2.0,0.0,0.0),
-        &Transform::translate(0.0,0.0,sp)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/2.0,0.0),
-        // Left and right
-        &Transform::translate(sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/-4.0,0.0), 
-        &Transform::translate(-sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/4.0,0.0),
-        // Top
-        &Transform::translate(0.0,sp,0.0)*&Transform::rotate_ypr(0.0, 0.0, std::f32::consts::TAU/4.0), 
-        // No bottom face needed
+        &Transform::translate(0.0,sp,0.0)*&Transform::rotate_ypr(0.0, 0.0, std::f32::consts::TAU/4.0), // Top
+        &Transform::translate(sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/-4.0,0.0), // Left
+        &Transform::translate(0.0,0.0,sp)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/2.0,0.0), // Back
+        &Transform::translate(-sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/4.0,0.0), // Right
+        Transform::translate(0.0,0.0,-sp), // Front
     ];
 
     let facelet_translations: [Transform<f32>;9] = [
@@ -960,7 +957,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             let ty = (fwh-ah)/(-1.0*fwh);
             let texture_transform = [
                 1.0/nw as f32,0.0,0.0,0.0,
-                0.0,1.0/nh as f32,0.0,0.0,
+                0.0,-1.0/nh as f32,0.0,1.0,
                 0.0,0.0,1.0,0.0,
                 0.0,0.0,0.0,1.0,
             ];
