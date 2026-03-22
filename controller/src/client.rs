@@ -255,7 +255,10 @@ pub enum FromGUI {
     ,BacktrackLEDDetect()
     ,ShutDown()
     ,SetBrightness(String)
-    ,CancelTimer()
+    ,CancelTimer(),
+    EnableCalibrationView(),
+    DisableCalibrationView(),
+    RotateSubface(u8,u8),
 }
 
 impl FromGUI{
@@ -280,6 +283,7 @@ enum Event {
     ServiceMessage(Vec<u8>)
     ,FromGUI(FromGUI)
     ,NetworkTimeout()
+    ,Disconnected()
 }
 
 fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
@@ -295,6 +299,7 @@ fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
             ,Err(e) => { println!("Error: {:?}", e); }
         }
     }
+    events.send(Event::Disconnected());
 }
 
 impl<T: Read + Write, C: Connector + Default> Messenger<T, C>{
@@ -309,16 +314,19 @@ impl<T: Read + Write, C: Connector + Default> Messenger<T, C>{
 }
 
 impl<T: Read + Write, C: Connector<Stream=T>> Messenger<T, C>{
-    fn connect(&mut self) -> std::io::Result<()>{
+    fn connect(&mut self) -> std::io::Result<bool>{
+        if self.stream.is_some() {
+            return Ok(false);
+        }
         let mut stream = self.connector.connect(&self.address)?;
         stream.write_all(b"next_challenge:a#a\n")?;
         self.stream = Some(stream);
-        Ok(())
+        Ok(true)
     }
 
     fn get_stream(&mut self) -> std::io::Result<&mut Option<T>>{
         if self.stream.is_none(){
-            self.connect()?
+            self.connect()?;
         }
         Ok(&mut self.stream)
     }
@@ -359,7 +367,7 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
         let mut command_queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
         let mut got_challenge = false;
 
-        let mut net_thread: Option<JoinHandle<()>> = None;
+        let net_thread: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
         let mut timeout_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
         let timeout_time_2 = Arc::clone(&timeout_time);
         let time_send = sender.clone();
@@ -399,14 +407,18 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
             }
         });
         
-
-        fn start_service_handler(net_thread: &mut Option<JoinHandle<()>>, service_sender: Sender<Event>, mut reader: TcpStream) {
-            if net_thread.is_some() {
-                let _ignored = net_thread.take().unwrap().join();
+        fn start_service_handler(net_thread: Arc<Mutex<Option<JoinHandle<()>>>>, service_sender: Sender<Event>, mut reader: TcpStream) {
+            if let Ok(mut t) = net_thread.try_lock() {
+                if t.is_some() {
+                    let _ignored = t.take().unwrap().join();
+                }
+                *t = Some(thread::spawn(move||{
+                    handle_responses(&mut reader, service_sender);
+                }));
             }
-            *net_thread = Some(thread::spawn(move||{
-                handle_responses(&mut reader, service_sender);
-            }));
+            else{
+                println!("Internal error: unable to spawn network thread in start_service_handler")
+            }
         }
 
         fn send_events(got_challenge: &mut bool, command_queue: &mut VecDeque<(String, Vec<String>)>, msg: Option<&mut TcpMessenger>, timeout_time: &mut Arc<Mutex<Option<Instant>>>) -> Vec<ToGUI>{
@@ -439,25 +451,18 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
 
         for event in receiver.iter(){
             use Event::*;
-            let result: Result<bool, std::sync::mpsc::SendError<ToGUI>> = (||{
+            let net_thread = Arc::clone(&net_thread);
+            let result: Result<(bool, bool), std::sync::mpsc::SendError<ToGUI>> = (||{
                 match event {
                     NetworkTimeout() => {
-                        if let Some(msg) = msg.as_mut(){
-                            let mut t = timeout_time.lock().unwrap();
-                            *t = Some(Instant::now() + Duration::from_secs(TIMEOUT_SECONDS));
-                            let r = msg.connect();
-                            match r {
-                                Ok(_) => {
-                                    start_service_handler(&mut net_thread, service_sender.clone(), msg.stream.as_ref().unwrap().try_clone().unwrap());
-                                    to_gui_sender.send(ToGUI::Connected(true))?;
-                                }
-                                Err(_) => {
-                                    to_gui_sender.send(ToGUI::Connected(false))?;
-                                }
-                            }
-                        }
-                    }
-                    ,ServiceMessage(s) => {
+                    },
+                    Disconnected() => {
+                        //println!("Connection lost");
+                        to_gui_sender.send(ToGUI::Connected(false))?;
+                        let _ = msg.take();
+                        return Ok((false, true));
+                    },
+                    ServiceMessage(s) => {
                         if let Some(msg) = msg.as_mut(){
                             {
                                 let mut t = timeout_time.lock().unwrap();
@@ -544,11 +549,11 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 }   
                                 ,ParseStatus::BadClient() => {
                                     eprintln!("Reply appears malformed");
-                                    return Ok(true);
+                                    return Ok((true,false));
                                 }
                                 ,ParseStatus::Unauthorised() => {
                                     eprintln!("Reply appears inauthentic");
-                                    return Ok(true);
+                                    return Ok((true,false));
                                 }
                             };
                         }
@@ -557,15 +562,17 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                         use self::FromGUI::*;
                         match e {
                             Connect(secret, addr) => {
-                                let mut m = TcpMessenger::new(secret, &addr);
+                                let mut m = msg.take().or_else(||Some(TcpMessenger::new(secret, &addr))).unwrap();
                                 {
                                     let mut t = timeout_time.lock().unwrap();
                                     *t = Some(Instant::now() + Duration::from_secs(TIMEOUT_SECONDS));
                                 }
                                 let r = m.connect();
                                 match r {
-                                    Ok(_) => {
-                                        start_service_handler(&mut net_thread, service_sender.clone(), m.stream.as_ref().unwrap().try_clone().unwrap());
+                                    Ok(is_new) => {
+                                        if is_new {
+                                            start_service_handler(net_thread, service_sender.clone(), m.stream.as_ref().unwrap().try_clone().unwrap());
+                                        }
                                         to_gui_sender.send(ToGUI::Connected(true))?;
                                     }
                                     Err(_) => {
@@ -663,25 +670,40 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
                             }
                             ,ShutDown() => {
-                                return Ok(true);
+                                return Ok((true,false));
                             }
                             ,SetBrightness(b) => {
                                 command_queue.push_back(("set_brightness".to_string(), vec![b]));
-                            }
+                            },
+                            EnableCalibrationView() => {
+                                command_queue.push_back(("enable_calibration".to_string(), vec![]));
+                            },
+                            DisableCalibrationView() => {
+                                command_queue.push_back(("disable_calibration".to_string(), vec![]));
+                            },
+                            RotateSubface(f,sf) => {
+                                command_queue.push_back(("rotate_subface".to_string(), vec![f.to_string(),sf.to_string()]));
+                            },
                         }
                     }
                 }
-                Ok(false)
+                Ok((false,false))
             })();
+            let mut skip_send = false;
             match result {
-                Ok(do_break) => {if do_break {break;}}
+                Ok((do_break,skip_send_)) => {
+                    if do_break {break;}
+                    skip_send = skip_send_;
+                }
                 ,Err(e) => {println!("Internal error while handling event: {:?}", e);}
             }
-            let replies = send_events(&mut got_challenge, &mut command_queue, msg.as_mut(), &mut timeout_time);
-            for reply in replies{
-                match to_gui_sender.send(reply) {
-                    Err(e) => {println!("Internal error: {:?}", e)}
-                    ,Ok(_) => {}
+            if !skip_send{
+                let replies = send_events(&mut got_challenge, &mut command_queue, msg.as_mut(), &mut timeout_time);
+                for reply in replies{
+                    match to_gui_sender.send(reply) {
+                        Err(e) => {println!("Internal error: {:?}", e)}
+                        ,Ok(_) => {}
+                    }
                 }
             }
         };
