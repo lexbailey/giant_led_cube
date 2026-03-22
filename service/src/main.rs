@@ -30,7 +30,7 @@ use std::ffi::c_void;
 #[cfg(feature="output_mode_jumbotron")]
 use gl_abstractions as gla;
 #[cfg(feature="output_mode_jumbotron")]
-use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, Uniform2F, UniformSampler2D, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform1F, Uniform1UIV, Uniform3FV, Uniform1I, Uniform1UI, Uniform2F, UniformSampler2D, shader_struct, impl_shader};
 
 #[cfg(feature="output_mode_jumbotron")]
 use std::sync::{Arc,Mutex};
@@ -321,14 +321,14 @@ fn send_state_to_client(gui_sender: Option<&Sender<StreamEvent>>, cube: Cube, re
 enum CubeDevice{
     PhysicalDevice{serial_port:Box<dyn SerialPort>},
     TestDevice{sequence:Vec<Twist>, buffer: Vec<u8>, next_twist: Instant},
-    IdleDevice(),
+    IdleDevice{},
 }
 
 impl Read for CubeDevice{
     fn read(&mut self, data: &mut [u8]) -> Result<usize, std::io::Error> {
         use CubeDevice::*;
         match self{
-            TestDevice{sequence, buffer, next_twist} => {
+            TestDevice{sequence, buffer, next_twist, ..} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
                     for _ in 0..20{
@@ -341,7 +341,7 @@ impl Read for CubeDevice{
                 }
                 while *next_twist < Instant::now() {
                     let next = sequence.remove(0);
-                    *next_twist = *next_twist + Duration::from_millis(500);
+                    *next_twist = *next_twist + Duration::from_millis(3000);
                     buffer.extend_from_slice(format!("*{};\n", next).as_bytes());
                 }
                 let mut mdata = data;
@@ -352,7 +352,7 @@ impl Read for CubeDevice{
                 Ok(n)
             },
             PhysicalDevice{serial_port} => {serial_port.read(data)},
-            IdleDevice() => {Ok(0)},
+            IdleDevice{..} => {Ok(0)},
         }
     }
 }
@@ -361,8 +361,7 @@ impl Write for CubeDevice{
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         use CubeDevice::*;
         match self{
-            TestDevice{..} => {Ok(data.len())}, // Currently does nothing, could make this display a test output perhaps?
-            IdleDevice{..} => {Ok(data.len())},
+            TestDevice{..} | IdleDevice{..} => { Ok(data.len()) },
             PhysicalDevice{serial_port} => {serial_port.write(data)},
         }
     }
@@ -388,7 +387,7 @@ impl CubeDevice{
         else if name == "idledevice" {
             // testdevice is a special name that refers to a fake cube controller that does not display anything, but will repeatedly apply and unapply
             // random sequences for testing purposes
-            Ok(IdleDevice())
+            Ok(IdleDevice{})
         }
         else{
             let result = serialport::new(name, 115200).timeout(Duration::from_secs(10)).open();
@@ -403,7 +402,7 @@ impl CubeDevice{
         use CubeDevice::*;
         match self{
             TestDevice{sequence, buffer, next_twist} => Ok(TestDevice{sequence:sequence.clone(), buffer:buffer.clone(), next_twist: *next_twist}),
-            IdleDevice() => Ok(IdleDevice()),
+            IdleDevice{} => Ok(IdleDevice{}),
             PhysicalDevice{serial_port} => match serial_port.try_clone() {
                 Ok(cloned) => Ok(PhysicalDevice{serial_port: cloned}),
                 Err(e) => Err(()), // TODO better error handling here
@@ -561,10 +560,15 @@ shader_struct!{
         uniform vec3 u_base_cols[6];
         uniform int u_cur_face;
         uniform vec2 u_facelet_coords;
+        uniform float u_border_size;
         out vec4 FragColor;
         void main() {
             vec2 tc = (vec4(u_facelet_coords.xy+UV,0.0,0.0)*u_texture_transform).xy;
             FragColor = texture(u_texture,tc);
+            float b = u_border_size;
+            if (UV.x < b || UV.x > (1.0-b) || UV.y < b || UV.y > (1.0-b)){
+                FragColor = vec4(u_base_cols[u_cur_face],1.0);
+            }
         }
         "#
     ,{
@@ -576,6 +580,7 @@ shader_struct!{
         u_base_cols: Uniform3FV,
         u_cur_face: Uniform1I,
         u_facelet_coords: Uniform2F,
+        u_border_size: Uniform1F,
     }
 }
 
@@ -599,23 +604,36 @@ shader_struct!{
         uniform float u_anim_pos;
         uniform uint u_prev_colours[54];
         uniform uint u_cur_colours[54];
+        uniform uint u_mapping[45];
+        uniform uint u_map_facenum[45];
+        uniform uint u_map_subfacenum[45];
         uniform vec3 u_base_cols[6];
-        /*
-         = {
-            vec3(1.0,1.0,1.0), // white
-            vec3(1.0,0.0,0.0), // red
-            vec3(0.0,0.0,1.0), // blue
-            vec3(0.0,1.0,0.0), // green
-            vec3(1.0,1.0,0.0), // yellow
-            vec3(1.0,0.5,0.0), // orange
-        };
-        */
+        uniform uint u_twist_face;
+        uniform float u_twist_dir;
         out vec4 FragColor;
         layout(location=0) out vec3 tFragColor;
+
+        const float PI = 3.1415;
 
         float bulge(float a){
             a = (a-0.5)*2;
             return 1-a*a*a*a;
+        }
+
+        mat3 translate(float x, float y){
+            return mat3(
+                1.0,0.0,x,
+                0.0,1.0,y,
+                0.0,0.0,1.0
+            );
+        }
+
+        mat3 rotate(float a){
+            return mat3(
+                cos(a), -sin(a),0.0,
+                sin(a), cos(a),0.0,
+                0.0,0.0,1.0
+            );
         }
 
         void main() {
@@ -624,11 +642,21 @@ shader_struct!{
             int iy = int(floor(px_pos.y / fp));
             int i = iy * 9 + ix;
             if (i < 45 && px_pos.y > 0.0 && px_pos.x > 0.0 && px_pos.y < (fp*5) && px_pos.x < (fp*9)){
+                bool this_face = u_map_facenum[i] == u_twist_face;
+                bool is_centre = u_map_subfacenum[i] == 4u;
+                uint j = u_mapping[i];
+                
                 vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
-                vec3 prev_base = u_base_cols[u_prev_colours[i]];
+                if (this_face && is_centre){
+                    float a = (PI/2) * u_anim_pos * -u_twist_dir;
+                    mat3 rot = translate(-0.5,-0.5)*rotate(a) *translate(0.5,0.5);
+                    fl_coord = (vec3(fl_coord,1.0) * rot).xy;
+                }
+
+                vec3 prev_base = u_base_cols[u_prev_colours[j]];
                 FragColor = vec4(prev_base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0) * (1.0-u_anim_pos);
 
-                vec3 base = u_base_cols[u_cur_colours[i]];
+                vec3 base = u_base_cols[u_cur_colours[j]];
                 FragColor += vec4(base*bulge(fl_coord.x)*bulge(fl_coord.y), 1.0) * (u_anim_pos);
             }
             else{
@@ -644,12 +672,17 @@ shader_struct!{
         u_facelet_px: Uniform1F,
         u_prev_colours: Uniform1UIV,
         u_cur_colours: Uniform1UIV,
+        u_mapping: Uniform1UIV,
+        u_map_facenum: Uniform1UIV,
+        u_map_subfacenum: Uniform1UIV,
         u_base_cols: Uniform3FV,
+        u_twist_face: Uniform1UI,
+        u_twist_dir: Uniform1F,
     }
 }
 
 #[cfg(feature="output_mode_jumbotron")]
-fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev_cube_state: Arc<Mutex<Cube>>, last_twist: Arc<Mutex<TwistInfo>>) {
+fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev_cube_state: Arc<Mutex<Cube>>, last_twist: Arc<Mutex<TwistInfo>>, led_map: Arc<Mutex<LedMap>>) {
 
     fn colour_num(c: cube_model::Colors) -> u32{
         use cube_model::Colors::*;
@@ -660,7 +693,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             Green => 3,
             Yellow => 4,
             Orange => 5,
-            Blank => 0,
+            Blank => 6,
         }
     }
 
@@ -856,7 +889,6 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
 
     let start_time = Instant::now();
 
-
     while !window.should_close() {
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
@@ -883,6 +915,7 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
             0.0,1.0,0.0, // green
             1.0,1.0,0.0, // yellow
             1.0,0.5,0.0, // orange
+            0.0,0.0,0.0, // black (for blank cells)
         ]);
         let screen_transform = [
             2.0/winw as f32,0.0,0.0,-1.0,
@@ -907,16 +940,26 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
                 colour_num(cube.faces[f].subfaces[s].color)
             }).collect()
         };
+        {
+            let lm = led_map.lock().unwrap();
+            shader.u_mapping.set(&lm.indexmap);
+            shader.u_map_facenum.set(&lm.facemap);
+            shader.u_map_subfacenum.set(&lm.subfacemap);
+        }
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
         let lt = last_twist.lock().unwrap();
         if let Some(t) = lt.time {
             let d = Instant::now() - t;
-            let d = ((d.as_millis() as f32)/300.0).min(1.0);
+            let d = ((d.as_millis() as f32)/1000.0).min(1.0);
             shader.u_anim_pos.set(d);
         }
         else{
             shader.u_anim_pos.set(1.0);
+        }
+        if let Some(twist) = lt.twist{
+            shader.u_twist_face.set(twist.face as u32);
+            shader.u_twist_dir.set(if twist.reverse {-1.0} else {1.0});
         }
 
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
@@ -972,11 +1015,12 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
                 0.8,0.8,0.8, // white
                 1.0,0.0,0.0, // red
                 0.0,0.0,1.0, // blue
-                0.0,1.0,0.0, // green
-                1.0,1.0,0.0, // yellow
                 1.0,0.5,0.0, // orange
+                //1.0,1.0,0.0, // yellow
+                0.0,1.0,0.0, // green
+                //0.0,0.0,0.0, // black (for blank cells)
             ]);
-
+            preview_cube.u_border_size.set(-0.1);
             bind_cube_facelet();
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
@@ -1004,6 +1048,37 @@ fn jumbotron_thread_main(config: &CubeConfig, cube_state: Arc<Mutex<Cube>>, prev
 struct TwistInfo{
     twist: Option<Twist>,
     time: Option<Instant>,
+}
+
+struct LedMap{
+    indexmap: [u32;45],
+    facemap: [u32;45],
+    subfacemap: [u32;45],
+}
+
+impl LedMap{
+
+    fn new() -> Self{
+        let mut lm = LedMap{
+            indexmap:[0;45],
+            facemap:[0;45],
+            subfacemap:[0;45],
+        };
+        lm.set("000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758");
+        lm
+    }
+
+    fn set(&mut self, map: &str){
+        for i in 0..=44{
+            let m = map.as_bytes();
+            let fnum = (m[i*2] - b'0') as u32;
+            let sfnum = (m[(i*2)+1] - b'0') as u32;
+            let num = fnum * 9 + sfnum;
+            self.indexmap[i] = if num > 44 { 0 } else { num };
+            self.facemap[i] = if num > 44 { 0 } else { fnum };
+            self.subfacemap[i] = if num > 44 { 0 } else { sfnum };
+        }   
+    }
 }
 
 fn main() {
@@ -1119,13 +1194,18 @@ fn main() {
     let mut prev_cube = Arc::new(Mutex::new(Cube::new()));
     let mut last_twist = Arc::new(Mutex::new(TwistInfo{twist:None, time: None}));
 
+    let mut led_map = Arc::new(Mutex::new(LedMap::new()));
+    
+    led_map.lock().unwrap().set(&config.led_map);
+
     #[cfg(feature="output_mode_jumbotron")]
     let jumbotron_thread = if args.jumbotron{
         let cube_state = Arc::clone(&cube);
         let prev_cube_state = Arc::clone(&prev_cube);
+        let led_map = Arc::clone(&led_map);
         let config = config.clone();
         let last_twist = last_twist.clone();
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist); }))
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist, led_map); }))
     } else { None };
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
@@ -1170,13 +1250,17 @@ fn main() {
                             // All subfaces blank
                             device_write.write(b"u                                                      ")?;
                             device_write.flush()?;
+                            let mut lm = led_map.lock().unwrap();
+                            lm.set("000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758");
                         }
                         ,ClientEvent::UpdateLEDMap(new_map) => {
                             println!("led map update");
                             device_write.write(b"cm")?;
                             device_write.write(new_map.as_bytes())?;
                             device_write.flush()?;
-                            config.led_map = new_map;
+                            config.led_map = new_map.clone();
+                            let mut lm = led_map.lock().unwrap();
+                            lm.set(&new_map);
                             persist_config(&config, &args.config);
                         }
                         ,ClientEvent::UpdateInputMap(new_map) => {
