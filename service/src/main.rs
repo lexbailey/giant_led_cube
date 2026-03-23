@@ -353,6 +353,7 @@ impl Read for CubeDevice{
                     // Generate a new sequence
                     for _ in 0..20{
                         sequence.push(Twist::from_string("F").unwrap());
+                        sequence.push(Twist::from_string("F'").unwrap());
                     }
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
