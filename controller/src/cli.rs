@@ -20,10 +20,10 @@ use rustyline::ExternalPrinter;
 
 macro_rules! mprintln {
     ($p:expr, $fmt:literal) => {
-        $p.print(format!($fmt)).unwrap()
+        $p.print(format!(concat!($fmt,"\n"))).unwrap()
     };
     ($p:expr, $fmt:literal, $($args:expr),+) => {
-        $p.print(format!($fmt, $($args),+)).unwrap()
+        $p.print(format!(concat!($fmt,"\n"), $($args),+)).unwrap()
     };
 }
 
@@ -214,7 +214,6 @@ fn main() {
                             ,StateUpdate() => {
                                 let data = state.lock().unwrap();
                                 draw(&gfx, &*data, p);
-                                
                             }
                             ,GameEnd() => {mprintln!(p, "TODO game end");}
                         }
@@ -230,8 +229,9 @@ fn main() {
                                 mprintln!(p, "\tdetect inputs            - start the input switch configuration sequence");
                                 mprintln!(p, "\tdetect leds              - start the LED configuration sequence");
                                 mprintln!(p, "\t    map <FACE> <SUBFACE> - map currently lit LED during LED detection sequence to face FACE and subface SUBFACE");
-                                mprintln!(p, "\t    map undo             - undo a step in the configuration sequence");
+                                mprintln!(p, "\t    map undo             - undo a step in the LED detection sequence");
                                 mprintln!(p, "\texit                     - quit the CLI");
+                                mprintln!(p, "\trot <FACE> <SUBFACE>     - rotate the specified subface by 90 degrees (use 'cal on' to see rotation guides)");
                                 mprintln!(p, "\tshow                     - show the state of the cube");
                                 mprintln!(p, "\tsolved                   - move to the solved state");
                                 mprintln!(p, "\tstart                    - start the game (applies a scramble too)");
@@ -331,10 +331,10 @@ fn main() {
                                         else{
                                             sender.send(SetBrightness(args[0].to_string()))?;
                                         }
-                                    }
+                                    },
                                     "connect" => {
                                         sender.send(Connect(secret.clone(),addr.clone()))?;
-                                    }
+                                    },
                                     "cal" => {
                                         if args.len() != 1{
                                             mprintln!(p, "cal requires one parameter");
@@ -344,8 +344,25 @@ fn main() {
                                             "off" => {sender.send(DisableCalibrationView())?;}
                                             _ => {mprintln!(p, "cal command expects 'on' or 'off' as parameter");}
                                         }
+                                    },
+                                    "rot" => {
+                                        if args.len() != 2{
+                                            mprintln!(p, "rot requires two parameters");
+                                        }
+                                        else{
+                                            let state = state.lock().unwrap();
+                                            if let Ok((f, s)) = (||{
+                                                Result::<(usize, usize), std::num::ParseIntError>::Ok((
+                                                    usize::from_str(args[0])?
+                                                    ,usize::from_str(args[1])?
+                                                ))
+                                            })() {
+                                                sender.send(RotateSubface(f, s))?;
+                                                mprintln!(p, "rotated subface ({}, {})", f, s);
+                                            }
+                                        }
                                     }
-                                    ,_ => {mprintln!(p, "Unknown command: {}",cmd);}
+                                    _ => {mprintln!(p, "Unknown command: {}",cmd);},
                                 }
                             }
                         }

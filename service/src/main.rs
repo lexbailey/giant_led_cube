@@ -51,11 +51,12 @@ struct Args{
 
 #[derive(Serialize, Deserialize, Clone)]
 struct CubeConfig{
-    led_map: String
-    ,input_map: String
-    ,secret: String
-    ,top_score: u128
-    ,facelet_px: Option<u32>
+    led_map: String,
+    input_map: String,
+    secret: String,
+    top_score: u128,
+    facelet_px: Option<u32>,
+    rotation_map: String,
 }
 
 enum DeviceEvent{
@@ -88,7 +89,7 @@ enum ClientEvent{
     SetBrightness(u8),
     EnableCalibrationView(),
     DisableCalibrationView(),
-    RotateSubface(u8,u8),
+    RotateSubface(usize,usize),
     ApplyTwist(String),
 }
 
@@ -216,8 +217,20 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                             "disable_calibration" => {
                                                 sender.send(Event::Client(ClientEvent::DisableCalibrationView()))?;
                                             },
-                                            "rotate_face" => {
-                                                todo!();
+                                            "rotate_subface" => {
+                                                if args.len() != 2{
+                                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                                    write_stream.write(msg.as_bytes())?;
+                                                }
+                                                let f = usize::from_str(&args[0]);
+                                                let sf = usize::from_str(&args[1]);
+                                                match (f, sf) {
+                                                    (Ok(f),Ok(sf)) => {sender.send(Event::Client(ClientEvent::RotateSubface(f,sf)))?;}
+                                                    _ => {
+                                                        let msg = auth.construct_reply("bad_argument", &vec![&command]);
+                                                        write_stream.write(msg.as_bytes())?;
+                                                    }
+                                                }
                                             },
                                             _=>{
                                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
@@ -981,7 +994,8 @@ fn jumbotron_thread_main(
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
             let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
-            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 4000.0,0.0);
+            //let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 4000.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,1.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
                 for (j, t2) in facelet_translations.iter().enumerate(){
@@ -1027,8 +1041,8 @@ impl LedMap{
     }
 
     fn set(&mut self, map: &str){
+        let m = map.as_bytes();
         for i in 0..=44{
-            let m = map.as_bytes();
             let fnum = (m[i*2] - b'0') as u32;
             let sfnum = (m[(i*2)+1] - b'0') as u32;
             let num = fnum * 9 + sfnum;
@@ -1036,6 +1050,19 @@ impl LedMap{
             self.facemap[i] = if num > 44 { 0 } else { fnum };
             self.subfacemap[i] = if num > 44 { 0 } else { sfnum };
         }   
+    }
+
+    fn rotate(&mut self, f: usize, sf: usize){
+        let i = self.indexmap[(f*9)+sf] as usize;
+        self.rotationmap[i] = (self.rotationmap[i]+3)%4;
+    }
+
+    fn set_rotations(&mut self, rotations: &str){
+        let m = rotations.as_bytes();
+        for i in 0..=44{
+            let num = (m[i] - b'0') as u32;
+            self.rotationmap[i] = num;
+        }
     }
 }
 
@@ -1068,6 +1095,7 @@ fn main() {
                 r#"{
                     "led_map": "000102030405060708101112131415161718202122232425262728303132333435363738404142434445464748505152535455565758"
                     ,"input_map": "000102030405060708091011121314151617"
+                    ,"rotation_map": "000000000000000000000000000000000000000000000"
                     ,"secret": ""
                     ,"top_score": 0
                 }"#
@@ -1155,7 +1183,11 @@ fn main() {
     let led_map = Arc::new(Mutex::new(LedMap::new()));
     let calibration_mode = Arc::new(Mutex::new(false));
     
-    led_map.lock().unwrap().set(&config.led_map);
+    {
+        let mut map = led_map.lock().unwrap();
+        map.set(&config.led_map);
+        map.set_rotations(&config.rotation_map);
+    }
 
     #[cfg(feature="output_mode_jumbotron")]
     let jumbotron_thread = if args.jumbotron{
@@ -1208,7 +1240,11 @@ fn main() {
                             *calibration_mode.lock().unwrap() = false;
                         }
                         ,ClientEvent::RotateSubface(f,sf) => {
-                            todo!();
+                            let mut lm = led_map.lock().unwrap();
+                            lm.rotate(f, sf);
+                            let rotstr = lm.rotationmap.iter().map(|a|a.to_string()).collect();
+                            config.rotation_map = rotstr;
+                            persist_config(&config, &args.config);
                         }
                         ,ClientEvent::ApplyTwist(t) => {
                             todo!();

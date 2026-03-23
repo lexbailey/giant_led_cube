@@ -258,7 +258,7 @@ pub enum FromGUI {
     ,CancelTimer(),
     EnableCalibrationView(),
     DisableCalibrationView(),
-    RotateSubface(u8,u8),
+    RotateSubface(usize,usize),
 }
 
 impl FromGUI{
