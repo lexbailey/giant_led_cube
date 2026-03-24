@@ -351,9 +351,11 @@ impl Read for CubeDevice{
             TestDevice{sequence, buffer, next_twist, ..} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
+                    sequence.push(Twist::from_string("L").unwrap());
                     for _ in 0..20{
                         sequence.push(Twist::from_string("F").unwrap());
-                        sequence.push(Twist::from_string("F'").unwrap());
+                        sequence.push(Twist::from_string("U").unwrap());
+                        sequence.push(Twist::from_string("L").unwrap());
                     }
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
@@ -633,6 +635,7 @@ shader_struct!{
         u_rotation_map: Uniform1UIV,
         u_map_facenum: Uniform1UIV,
         u_map_subfacenum: Uniform1UIV,
+        u_inverse_facemap: Uniform1UIV,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
@@ -912,6 +915,7 @@ fn jumbotron_thread_main(
             shader.u_mapping.set(&lm.indexmap);
             shader.u_map_facenum.set(&lm.facemap);
             shader.u_map_subfacenum.set(&lm.subfacemap);
+            shader.u_inverse_facemap.set(&lm.inverse());
             shader.u_rotation_map.set(&lm.rotationmap);
         }
         shader.u_prev_colours.set(prev_cols.as_slice());
@@ -1064,6 +1068,19 @@ impl LedMap{
             let num = (m[i] - b'0') as u32;
             self.rotationmap[i] = num;
         }
+    }
+
+    fn inverse(&self) -> [u32;45]{
+        // Generate an inverse lookup map to find the index for a given face and subface pair
+        // which is specified as (f*9)+sf
+        let mut map = [0;45];
+        for i in 0..=44{
+            let f = self.facemap[i];
+            let sf = self.subfacemap[i];
+            let j = ((f*9)+sf) as usize;
+            map[j] = self.indexmap[i] as u32;
+        }
+        return map;
     }
 }
 
