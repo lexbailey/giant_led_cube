@@ -636,6 +636,7 @@ shader_struct!{
         u_map_facenum: Uniform1UIV,
         u_map_subfacenum: Uniform1UIV,
         u_inverse_facemap: Uniform1UIV,
+        u_adjacent: Uniform1UIV,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
@@ -917,6 +918,7 @@ fn jumbotron_thread_main(
             shader.u_map_subfacenum.set(&lm.subfacemap);
             shader.u_inverse_facemap.set(&lm.inverse());
             shader.u_rotation_map.set(&lm.rotationmap);
+            shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6])
         }
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
