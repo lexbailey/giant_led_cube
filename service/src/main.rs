@@ -90,7 +90,7 @@ enum ClientEvent{
     EnableCalibrationView(),
     DisableCalibrationView(),
     RotateSubface(usize,usize),
-    ApplyTwist(String),
+    DoTwist(cube_model::Twist),
 }
 
 enum Event{
@@ -232,6 +232,19 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                                     }
                                                 }
                                             },
+                                            "do_twist" => {
+                                                if args.len() != 1{
+                                                    let msg = auth.construct_reply("wrong_arguments", &vec![&command]);
+                                                    write_stream.write(msg.as_bytes())?;
+                                                }
+                                                if let Ok(t) = Twist::from_string(&args[0]){
+                                                    sender.send(Event::Client(ClientEvent::DoTwist(t)))?;
+                                                }
+                                                else{
+                                                    let msg = auth.construct_reply("bad_argument", &vec![&command]);
+                                                    write_stream.write(msg.as_bytes())?;
+                                                }
+                                            }
                                             _=>{
                                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
                                                 write_stream.write(msg.as_bytes())?;
@@ -637,6 +650,7 @@ shader_struct!{
         u_map_subfacenum: Uniform1UIV,
         u_inverse_facemap: Uniform1UIV,
         u_adjacent: Uniform1UIV,
+        u_twist_dirs: Uniform1UIV,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
@@ -918,7 +932,8 @@ fn jumbotron_thread_main(
             shader.u_map_subfacenum.set(&lm.subfacemap);
             shader.u_inverse_facemap.set(&lm.inverse());
             shader.u_rotation_map.set(&lm.rotationmap);
-            shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6])
+            shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6]);
+            shader.u_twist_dirs.set(&include!("dir_map.txt"));
         }
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
@@ -1001,8 +1016,8 @@ fn jumbotron_thread_main(
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
             let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
-            //let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 4000.0,0.0);
-            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,1.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 4000.0,0.0);
+            //let base_trans = &base_trans * &Transform::rotate_xyz(0.00,1.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
                 for (j, t2) in facelet_translations.iter().enumerate(){
@@ -1266,8 +1281,12 @@ fn main() {
                             config.rotation_map = rotstr;
                             persist_config(&config, &args.config);
                         }
-                        ,ClientEvent::ApplyTwist(t) => {
-                            todo!();
+                        ,ClientEvent::DoTwist(twist) => {
+                            let mut c = cube.lock().unwrap();
+                            prev_cube.lock().unwrap().deserialise(&c.serialise()).unwrap();
+                            c.twist(twist);
+                            last_twist.lock().unwrap().twist = Some(twist);
+                            last_twist.lock().unwrap().time = Some(Instant::now());
                         }
                         ,ClientEvent::StartDetectLED() => {
                             println!("Detect LEDs");

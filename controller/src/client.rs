@@ -259,6 +259,7 @@ pub enum FromGUI {
     EnableCalibrationView(),
     DisableCalibrationView(),
     RotateSubface(usize,usize),
+    DoTwist(Twist),
 }
 
 impl FromGUI{
@@ -684,6 +685,9 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                             RotateSubface(f,sf) => {
                                 command_queue.push_back(("rotate_subface".to_string(), vec![f.to_string(),sf.to_string()]));
                             },
+                            DoTwist(t) => {
+                                command_queue.push_back(("do_twist".to_string(), vec![t.to_string()]));
+                            }
                         }
                     }
                 }

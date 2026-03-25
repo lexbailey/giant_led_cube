@@ -194,6 +194,11 @@ fn main() {
             return;
         }
         let gui_release = move||{let _ignored = sync_sender.send(());};
+        enum TwistMode{
+            Client(),
+            Server(),
+        }
+        let mut twist_mode = TwistMode::Client();
         for ev in receiver.iter() {
             let result: Result<bool, SendError<client::FromGUI>> = (||{
                 match ev {
@@ -236,6 +241,8 @@ fn main() {
                                 mprintln!(p, "\tsolved                   - move to the solved state");
                                 mprintln!(p, "\tstart                    - start the game (applies a scramble too)");
                                 mprintln!(p, "\ttwist <TWIST>            - execute a twist on the cube. eg: \"twist U'\"");
+                                mprintln!(p, "\ttwistmode client         - twists happen in the client, and the resulting raw state sent to the server");
+                                mprintln!(p, "\ttwistmode server         - twists happend on the server, and the resulting raw state is pulled from the server");
                             }
                             ,"show" => {
                                 let data = state.lock().unwrap();
@@ -299,12 +306,37 @@ fn main() {
                                             mprintln!(p, "twist requires one parameter");
                                         }
                                         let mut data = state.lock().unwrap();
-                                        match data.cube.twists(args_str){
-                                            Err(msg) => {mprintln!(p, "Error: {}", msg);}
-                                            ,Ok(_) => {
-                                                sender.send(SyncState())?;
-                                                draw(&gfx, &data, p);
-                                            }
+                                        match twist_mode{
+                                            TwistMode::Client() => {
+                                                match data.cube.twists(args_str){
+                                                    Err(msg) => {mprintln!(p, "Error: {}", msg);}
+                                                    ,Ok(_) => {
+                                                        sender.send(SyncState())?;
+                                                        draw(&gfx, &data, p);
+                                                    }
+                                                }
+                                            },
+                                            TwistMode::Server() => {
+                                                if let Ok(t) = cube_model::Twist::seq_from_string(args_str){
+                                                    for t in t{
+                                                        sender.send(DoTwist(t));
+                                                    }
+                                                    sender.send(GetState());
+                                                }
+                                                else{
+                                                    mprintln!(p, "Invalid twist sequence.");
+                                                }
+                                            },
+                                        }
+                                    }
+                                    "twistmode" => {
+                                        if args.len() != 1{
+                                            mprintln!(p, "twistmode requires one parameter");
+                                        }
+                                        match args[0]{
+                                            "client" => {twist_mode = TwistMode::Client();},
+                                            "server" => {twist_mode = TwistMode::Server();},
+                                            a => {mprintln!(p, "unknown twist mode '{}'", a)},
                                         }
                                     }
                                     ,"map" => {
