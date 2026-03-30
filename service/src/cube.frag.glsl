@@ -11,6 +11,7 @@ uniform uint u_map_subfacenum[45];
 uniform uint u_inverse_facemap[45];
 uniform uint u_adjacent[45];
 uniform uint u_twist_dirs[6*9*9];
+uniform uint u_colour_twist_map[6*9*9];
 uniform vec3 u_base_cols[6];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
@@ -56,10 +57,12 @@ vec4 arrowhead(vec2 fl_coord, vec3 base, uint rot){
     float ax = abs(cfl.x);
     float ay = abs(cfl.y);
     vec3 c = vec3(0.0,0.0,0.0);
+    float a = 1.0;
     if ( y > 0.25 && y < 0.45 && ax < 0.45-y){
         c += base;
+        a = 0.0;
     }
-    return vec4(c,1.0);
+    return vec4(c,a);
 }
 
 
@@ -230,8 +233,15 @@ void main() {
                 uint angle = sf_rot+1u;
                 uint dir_index = (u_twist_face * 54u) + (f * 9u) + sf;
                 uint d = u_twist_dirs[dir_index];
+                uint other_cols4 = u_colour_twist_map[dir_index];
+                uint other_cols2 = other_cols4 & 0xffffu;
                 angle += d;
-                if (u_twist_dir < 0){ angle += 2u; }
+                if (u_twist_dir < 0){
+                    angle += 2u;
+                    other_cols2 = (other_cols4 >> 16);
+                }
+                uint other_col_a = other_cols2 & 0xffu;
+                uint other_col_b = (other_cols2 & 0xff00u) >> 8;
                 mat3 rot = rotate(angle * (PI/2));
                 vec2 fl_coord_a  = vec3(fl_coord + (vec3(      anim ,0.0,1.0)*rot).xy,1.0).xy;
                 vec2 fl_coord_a2 = vec3(fl_coord + (vec3(-(3.0-anim),0.0,1.0)*rot).xy,1.0).xy;
@@ -241,8 +251,8 @@ void main() {
                 FragColor += render_tile(fl_coord_a, prev_base, sf_rot, is_centre, is_edge, is_corner);
     
                 // two intermediate colours slide through
-                FragColor += render_tile(fl_coord_a3, u_base_cols[0], sf_rot, is_centre, is_edge, is_corner);
-                FragColor += render_tile(fl_coord_a4, u_base_cols[0], sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(fl_coord_a3, u_base_cols[u_prev_colours[other_col_b]], sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(fl_coord_a4, u_base_cols[u_prev_colours[other_col_a]], sf_rot, is_centre, is_edge, is_corner);
 
                 // next colour, slides in
                 FragColor += render_tile(fl_coord_a2, base, sf_rot, is_centre, is_edge, is_corner);
@@ -259,11 +269,13 @@ void main() {
             vec3 edge_base2 = u_base_cols[u_cur_colours[get_index(f, 3u)]];
             vec3 edge_base3 = u_base_cols[u_cur_colours[get_index(f, 7u)]];
             vec3 edge_base4 = u_base_cols[u_cur_colours[get_index(f, 5u)]];
-            FragColor +=
-                arrowhead(c, edge_base1*4-1, (sf_rot + 0u)%4u) +
-                arrowhead(c, edge_base2*4-1, (sf_rot + 1u)%4u) +
-                arrowhead(c, edge_base3*4-1, (sf_rot + 2u)%4u) +
-                arrowhead(c, edge_base4*4-1, (sf_rot + 3u)%4u);
+            vec4 ah1 = arrowhead(c, edge_base1, (sf_rot + 0u)%4u);
+            vec4 ah2 = arrowhead(c, edge_base2, (sf_rot + 1u)%4u);
+            vec4 ah3 = arrowhead(c, edge_base3, (sf_rot + 2u)%4u);
+            vec4 ah4 = arrowhead(c, edge_base4, (sf_rot + 3u)%4u);
+            float mask = ah1.a * ah2.a * ah3.a * ah4.a;
+            vec4 arrows = vec4(ah1.rgb+ah2.rgb+ah3.rgb+ah4.rgb, 0.0);
+            FragColor = (FragColor * mask) + arrows;
         }
 
     }

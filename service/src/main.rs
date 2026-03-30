@@ -364,12 +364,12 @@ impl Read for CubeDevice{
             TestDevice{sequence, buffer, next_twist, ..} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
-                    sequence.push(Twist::from_string("L").unwrap());
-                    for _ in 0..20{
-                        sequence.push(Twist::from_string("F").unwrap());
-                        sequence.push(Twist::from_string("U").unwrap());
-                        sequence.push(Twist::from_string("L").unwrap());
-                    }
+                    //sequence.push(Twist::from_string("L").unwrap());
+                    //for _ in 0..20{
+                    //    sequence.push(Twist::from_string("F").unwrap());
+                    //    sequence.push(Twist::from_string("U").unwrap());
+                    //    sequence.push(Twist::from_string("L").unwrap());
+                    //}
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
                     }
@@ -380,7 +380,7 @@ impl Read for CubeDevice{
                 }
                 while *next_twist < Instant::now() {
                     let next = sequence.remove(0);
-                    *next_twist = *next_twist + Duration::from_millis(5000);
+                    *next_twist = *next_twist + Duration::from_millis(1000);
                     buffer.extend_from_slice(format!("*{};\n", next).as_bytes());
                 }
                 let mut mdata = data;
@@ -651,6 +651,7 @@ shader_struct!{
         u_inverse_facemap: Uniform1UIV,
         u_adjacent: Uniform1UIV,
         u_twist_dirs: Uniform1UIV,
+        u_colour_twist_map: Uniform1UIV,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
@@ -934,13 +935,14 @@ fn jumbotron_thread_main(
             shader.u_rotation_map.set(&lm.rotationmap);
             shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6]);
             shader.u_twist_dirs.set(&include!("dir_map.txt"));
+            shader.u_colour_twist_map.set(&include!("colour_map.txt"));
         }
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
         let lt = last_twist.lock().unwrap();
         if let Some(t) = lt.time {
             let d = Instant::now() - t;
-            let d = ((d.as_millis() as f32)/4000.0).min(1.0);
+            let d = ((d.as_millis() as f32)/400.0).min(1.0);
             shader.u_anim_pos.set(d);
         }
         else{
