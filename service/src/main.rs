@@ -365,22 +365,23 @@ impl Read for CubeDevice{
                 if sequence.len() <= 0 {
                     // Generate a new sequence
                     //sequence.push(Twist::from_string("L").unwrap());
-                    //for _ in 0..20{
-                    //    sequence.push(Twist::from_string("F").unwrap());
-                    //    sequence.push(Twist::from_string("U").unwrap());
-                    //    sequence.push(Twist::from_string("L").unwrap());
-                    //}
+                    for _ in 0..200{
+                        sequence.push(Twist::from_string("F").unwrap());
+                        sequence.push(Twist::from_string("F'").unwrap());
+                        //sequence.push(Twist::from_string("U").unwrap());
+                        //sequence.push(Twist::from_string("L").unwrap());
+                    }
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
                     }
                     for i in 0..20{
                         sequence.push(sequence[19-i].inverse())
                     }
-                    *next_twist = Instant::now() + Duration::from_secs(3);
+                    *next_twist = Instant::now() + Duration::from_secs(1);
                 }
                 while *next_twist < Instant::now() {
                     let next = sequence.remove(0);
-                    *next_twist = *next_twist + Duration::from_millis(1000);
+                    *next_twist = *next_twist + Duration::from_millis(5000);
                     buffer.extend_from_slice(format!("*{};\n", next).as_bytes());
                 }
                 let mut mdata = data;
@@ -650,14 +651,15 @@ shader_struct!{
         u_map_subfacenum: Uniform1UIV,
         u_inverse_facemap: Uniform1UIV,
         u_adjacent: Uniform1UIV,
-        u_twist_dirs: Uniform1UIV,
-        u_colour_twist_map: Uniform1UIV,
+        u_data_table: UniformSamplerBuffer,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
         u_debug_arrow: Uniform1UI,
     }
 }
+
+const data_table: &[u8;6*9*9*4] = include_bytes!("data_table.bin");
 
 #[cfg(feature="output_mode_jumbotron")]
 fn jumbotron_thread_main(
@@ -746,6 +748,8 @@ fn jumbotron_thread_main(
     unsafe{ gl::GenVertexArrays(1, &mut verts); gl::GenBuffers(1, &mut vbo); }
     let bind_screen_rect = ||unsafe { gl::BindVertexArray(verts); gl::BindBuffer(gl::ARRAY_BUFFER, vbo); };
 
+    let mut data_texture = 0;
+    let mut data_buffer = 0;
     unsafe{
         bind_screen_rect();
         gl::BufferData(
@@ -758,6 +762,20 @@ fn jumbotron_thread_main(
         // position attribute
         gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
         gl::EnableVertexAttribArray(0);
+
+        // put the data table in place
+        gl::GenTextures(1, &mut data_texture);
+        gl::GenBuffers(1, &mut data_buffer);
+        gl::BindBuffer(gl::TEXTURE_BUFFER, data_buffer);
+        gl::BufferData(
+            gl::TEXTURE_BUFFER,
+            (data_table.len() * mem::size_of::<GLbyte>()) as GLsizeiptr,
+            &data_table[0] as *const u8 as *const c_void,
+            gl::STATIC_DRAW,
+        );
+        gl::BindTexture(gl::TEXTURE_BUFFER, data_texture);
+        gl::TexBuffer(gl::TEXTURE_BUFFER, gl::RGBA8UI, data_buffer);
+        shader.u_data_table.set(data_texture as i32);
     }
 
     // -------------------------------------------------
@@ -835,6 +853,7 @@ fn jumbotron_thread_main(
         gl::GenFramebuffers(1, &mut cube_framebuffer);
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
         gl::GenTextures(1, &mut cube_texture);
+        println!("{}", cube_texture);
         gl::BindTexture(gl::TEXTURE_2D, cube_texture);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, width as i32, height as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, ptr::null());
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
@@ -934,15 +953,13 @@ fn jumbotron_thread_main(
             shader.u_inverse_facemap.set(&lm.inverse());
             shader.u_rotation_map.set(&lm.rotationmap);
             shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6]);
-            shader.u_twist_dirs.set(&include!("dir_map.txt"));
-            shader.u_colour_twist_map.set(&include!("colour_map.txt"));
         }
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
         let lt = last_twist.lock().unwrap();
         if let Some(t) = lt.time {
             let d = Instant::now() - t;
-            let d = ((d.as_millis() as f32)/400.0).min(1.0);
+            let d = ((d.as_millis() as f32)/4000.0).min(1.0);
             shader.u_anim_pos.set(d);
         }
         else{
@@ -1018,7 +1035,7 @@ fn jumbotron_thread_main(
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
             let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
-            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 4000.0,0.0);
+            let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 10000.0,0.0);
             //let base_trans = &base_trans * &Transform::rotate_xyz(0.00,1.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());

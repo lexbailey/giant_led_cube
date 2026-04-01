@@ -80,6 +80,7 @@ define_uniform!(UniformMat4x3FV; count: i32, transpose: bool, data: &[f32;12];  
 // Alternative names for some types
 define_uniform!(UniformSampler2D; a:i32; Uniform1i; a as GLint);
 define_uniform!(UniformSampler2DV; data: &[i32]; Uniform1iv; data.len().try_into().unwrap(), &data[0] as *const GLint);
+define_uniform!(UniformSamplerBuffer; a:i32; Uniform1i; a as GLint);
 
 #[macro_export]
 macro_rules! impl_shader{

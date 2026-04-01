@@ -10,8 +10,7 @@ uniform uint u_map_facenum[45];
 uniform uint u_map_subfacenum[45];
 uniform uint u_inverse_facemap[45];
 uniform uint u_adjacent[45];
-uniform uint u_twist_dirs[6*9*9];
-uniform uint u_colour_twist_map[6*9*9];
+uniform usamplerBuffer u_data_table;
 uniform vec3 u_base_cols[6];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
@@ -231,17 +230,20 @@ void main() {
             else {
                 float anim = u_anim_pos * 3;
                 uint angle = sf_rot+1u;
-                uint dir_index = (u_twist_face * 54u) + (f * 9u) + sf;
-                uint d = u_twist_dirs[dir_index];
-                uint other_cols4 = u_colour_twist_map[dir_index];
-                uint other_cols2 = other_cols4 & 0xffffu;
-                angle += d;
+                int dir_index = (int(u_twist_face) * 54) + (int(f) * 9) + int(sf);
+                uvec4 data_entry = uvec4(texelFetch(u_data_table, dir_index));
+                uint other_col_a;
+                uint other_col_b;
+                angle += (data_entry.a >> 6u) & 3u;
                 if (u_twist_dir < 0){
                     angle += 2u;
-                    other_cols2 = (other_cols4 >> 16);
+                    other_col_a = data_entry.g;// & 0x3fu;
+                    other_col_b = data_entry.r;// & 0x3fu;
                 }
-                uint other_col_a = other_cols2 & 0xffu;
-                uint other_col_b = (other_cols2 & 0xff00u) >> 8;
+                else {
+                    other_col_a = data_entry.a & 0x3fu;
+                    other_col_b = data_entry.b;// & 0x3fu;
+                }
                 mat3 rot = rotate(angle * (PI/2));
                 vec2 fl_coord_a  = vec3(fl_coord + (vec3(      anim ,0.0,1.0)*rot).xy,1.0).xy;
                 vec2 fl_coord_a2 = vec3(fl_coord + (vec3(-(3.0-anim),0.0,1.0)*rot).xy,1.0).xy;
