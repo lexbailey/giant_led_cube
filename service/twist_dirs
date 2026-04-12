@@ -22,8 +22,8 @@ for twist_face, adjacent in dirs.items():
         index2 = (twist_face * 54) + index
         dir_map[index2] = dir_
 
-with open('src/dir_map.txt', 'w+') as f:
-    f.write(str(dir_map))
+#with open('src/dir_map.txt', 'w+') as f:
+#    f.write(str(dir_map))
 
 subface_colours = {
     0:{10:[ 9,20,11,36], 19:[18,29,20, 9], 28:[27,38,29,18], 37:[36,11,38,27],
@@ -55,8 +55,8 @@ for twist_face, sf_maps in subface_colours.items():
         colour_map[index] = n
         colour_map_u[index] = nearby
 
-with open('src/colour_map.txt', 'w+') as f:
-    f.write(str(colour_map))
+#with open('src/colour_map.txt', 'w+') as f:
+#    f.write(str(colour_map))
 
 arr = []
 for i in range(6*9*9):

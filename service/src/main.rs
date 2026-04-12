@@ -365,23 +365,23 @@ impl Read for CubeDevice{
                 if sequence.len() <= 0 {
                     // Generate a new sequence
                     //sequence.push(Twist::from_string("L").unwrap());
-                    for _ in 0..200{
-                        sequence.push(Twist::from_string("F").unwrap());
-                        sequence.push(Twist::from_string("F'").unwrap());
-                        //sequence.push(Twist::from_string("U").unwrap());
-                        //sequence.push(Twist::from_string("L").unwrap());
-                    }
+                    //for _ in 0..200{
+                    //  sequence.push(Twist::from_string("F").unwrap());
+                    //  //sequence.push(Twist::from_string("F'").unwrap());
+                    //  //sequence.push(Twist::from_string("U").unwrap());
+                    //  //sequence.push(Twist::from_string("L").unwrap());
+                    //}
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
                     }
                     for i in 0..20{
                         sequence.push(sequence[19-i].inverse())
                     }
-                    *next_twist = Instant::now() + Duration::from_secs(1);
+                    *next_twist = Instant::now() + Duration::from_millis(5000);
                 }
                 while *next_twist < Instant::now() {
                     let next = sequence.remove(0);
-                    *next_twist = *next_twist + Duration::from_millis(5000);
+                    *next_twist = *next_twist + Duration::from_millis(1500);
                     buffer.extend_from_slice(format!("*{};\n", next).as_bytes());
                 }
                 let mut mdata = data;
@@ -597,7 +597,7 @@ shader_struct!{
         in vec2 UV;
         uniform sampler2D u_texture;
         uniform mat4 u_texture_transform;
-        uniform vec3 u_base_cols[6];
+        uniform vec3 u_base_cols[7];
         uniform int u_cur_face;
         uniform vec2 u_facelet_coords;
         uniform float u_border_size;
@@ -656,6 +656,7 @@ shader_struct!{
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
         u_debug_arrow: Uniform1UI,
+        u_anim_style: Uniform1UI,
     }
 }
 
@@ -775,8 +776,8 @@ fn jumbotron_thread_main(
         );
         gl::BindTexture(gl::TEXTURE_BUFFER, data_texture);
         gl::TexBuffer(gl::TEXTURE_BUFFER, gl::RGBA8UI, data_buffer);
-        shader.u_data_table.set(data_texture as i32);
     }
+    shader.u_data_table.set(data_texture as i32);
 
     // -------------------------------------------------
     let facelet_vert_array: [f32;12] = [
@@ -853,7 +854,6 @@ fn jumbotron_thread_main(
         gl::GenFramebuffers(1, &mut cube_framebuffer);
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
         gl::GenTextures(1, &mut cube_texture);
-        println!("{}", cube_texture);
         gl::BindTexture(gl::TEXTURE_2D, cube_texture);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, width as i32, height as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, ptr::null());
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
@@ -959,7 +959,7 @@ fn jumbotron_thread_main(
         let lt = last_twist.lock().unwrap();
         if let Some(t) = lt.time {
             let d = Instant::now() - t;
-            let d = ((d.as_millis() as f32)/4000.0).min(1.0);
+            let d = ((d.as_millis() as f32)/1000.0).min(1.0);
             shader.u_anim_pos.set(d);
         }
         else{
@@ -971,6 +971,7 @@ fn jumbotron_thread_main(
         }
         
         shader.u_debug_arrow.set(if debug {1} else {0});
+        shader.u_anim_style.set(0);
 
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
         
@@ -1022,13 +1023,15 @@ fn jumbotron_thread_main(
                 0.0,0.0,0.0,1.0,
             ]);
             preview_cube.u_base_cols.set(&[
+                // NOTE: different to other base cols for some reason
+                // I should maybe fix this???
                 0.8,0.8,0.8, // white
                 1.0,0.0,0.0, // red
                 0.0,0.0,1.0, // blue
                 1.0,0.5,0.0, // orange
-                //1.0,1.0,0.0, // yellow
                 0.0,1.0,0.0, // green
-                //0.0,0.0,0.0, // black (for blank cells)
+                1.0,1.0,0.0, // yellow
+                0.0,0.0,0.0, // black (for blank cells)
             ]);
             preview_cube.u_border_size.set(if debug {0.05} else {-0.1});
             bind_cube_facelet();

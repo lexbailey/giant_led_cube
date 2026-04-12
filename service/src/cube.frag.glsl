@@ -11,10 +11,11 @@ uniform uint u_map_subfacenum[45];
 uniform uint u_inverse_facemap[45];
 uniform uint u_adjacent[45];
 uniform usamplerBuffer u_data_table;
-uniform vec3 u_base_cols[6];
+uniform vec3 u_base_cols[7];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
 uniform uint u_debug_arrow;
+uniform uint u_anim_style;
 out vec4 FragColor;
 layout(location=0) out vec3 tFragColor;
 
@@ -35,11 +36,41 @@ mat3 translate(float x, float y){
     );
 }
 
+mat4 translate4(float x, float y, float z){
+    return mat4(
+        1.0,0.0,0.0,x,
+        0.0,1.0,0.0,y,
+        0.0,0.0,1.0,z,
+        0.0,0.0,0.0,1.0
+    );
+}
+
 mat3 rotate(float a){
     return mat3(
         cos(a), -sin(a),0.0,
         sin(a), cos(a),0.0,
         0.0,0.0,1.0
+    );
+}
+
+mat4 rotate4(float x, float y, float z){
+    return mat4(
+        cos(z), -sin(z),0.0,0.0,
+        sin(z), cos(z),0.0,0.0,
+        0.0,0.0,1.0,0.0,
+        0.0,0.0,0.0,1.0
+    )*
+    mat4(
+        cos(y), 0.0, sin(y),0.0,
+        0.0,1.0,0.0,0.0,
+        -sin(y), cos(y),1.0,0.0,
+        0.0,0.0,0.0,1.0
+    )*
+    mat4(
+        1.0,0.0,0.0,0.0,
+        0.0,cos(x), -sin(x),0.0,
+        0.0,sin(x), cos(x),0.0,
+        0.0,0.0,0.0,1.0
     );
 }
 
@@ -228,6 +259,7 @@ void main() {
                 FragColor += render_tile(fl_coord, base, sf_rot, is_centre, is_edge, is_corner);
             }
             else {
+                // This is the code path for tiles around the edge of a face that is twisting.
                 float anim = u_anim_pos * 3;
                 uint angle = sf_rot+1u;
                 int dir_index = (int(u_twist_face) * 54) + (int(f) * 9) + int(sf);
@@ -244,11 +276,33 @@ void main() {
                     other_col_a = data_entry.a & 0x3fu;
                     other_col_b = data_entry.b;// & 0x3fu;
                 }
-                mat3 rot = rotate(angle * (PI/2));
-                vec2 fl_coord_a  = vec3(fl_coord + (vec3(      anim ,0.0,1.0)*rot).xy,1.0).xy;
-                vec2 fl_coord_a2 = vec3(fl_coord + (vec3(-(3.0-anim),0.0,1.0)*rot).xy,1.0).xy;
-                vec2 fl_coord_a3 = vec3(fl_coord + (vec3(-(1.0-anim),0.0,1.0)*rot).xy,1.0).xy;
-                vec2 fl_coord_a4 = vec3(fl_coord + (vec3(-(2.0-anim),0.0,1.0)*rot).xy,1.0).xy;
+
+                vec2 fl_coord_a;
+                vec2 fl_coord_a2;
+                vec2 fl_coord_a3;
+                vec2 fl_coord_a4;
+
+                if (u_anim_style == 0u){
+                    mat3 rot = rotate(angle * (PI/2));
+                    fl_coord_a  = fl_coord + (vec3(      anim ,0.0,1.0)*rot).xy;
+                    fl_coord_a2 = fl_coord + (vec3(-(3.0-anim),0.0,1.0)*rot).xy;
+                    fl_coord_a3 = fl_coord + (vec3(-(1.0-anim),0.0,1.0)*rot).xy;
+                    fl_coord_a4 = fl_coord + (vec3(-(2.0-anim),0.0,1.0)*rot).xy;
+                }
+                if (u_anim_style == 1u){
+                    mat3 rot = rotate(angle * (PI/2));
+                    vec3 fl_coord3_a  = vec3(fl_coord,1.5) + (vec3( 0.0,0.0,1.0)*rot);
+                    vec3 fl_coord3_a2 = vec3(fl_coord,1.5) + (vec3(-3.0,0.0,1.0)*rot);
+                    vec3 fl_coord3_a3 = vec3(fl_coord,1.5) + (vec3(-1.0,0.0,1.0)*rot);
+                    vec3 fl_coord3_a4 = vec3(fl_coord,1.5) + (vec3(-2.0,0.0,1.0)*rot);
+                    //fl_coord_a = (vec4(fl_coord_a, 0.0, 1.0) * translate4(0.0,0.0,1.5) * rotate4(0.0,anim*(PI/2),0.0) * translate4(0.0,0.0,-1.5)).xy;
+                    float d = 0;
+                    float fd = 0;
+                    fl_coord_a = (vec4(fl_coord3_a,  1.0) * translate4(-fd,-fd,-d) * rotate4(0.0,u_anim_pos*(PI/2),0.0) * translate4(fd,fd,d)).xy;
+                    fl_coord_a2= (vec4(fl_coord3_a2, 1.0) * translate4(-fd,-fd,-d) * rotate4(0.0,u_anim_pos*(PI/2),0.0) * translate4(fd,fd,d)).xy;
+                    fl_coord_a3= (vec4(fl_coord3_a3, 1.0) * translate4(-fd,-fd,-d) * rotate4(0.0,u_anim_pos*(PI/2),0.0) * translate4(fd,fd,d)).xy;
+                    fl_coord_a4= (vec4(fl_coord3_a4, 1.0) * translate4(-fd,-fd,-d) * rotate4(0.0,u_anim_pos*(PI/2),0.0) * translate4(fd,fd,d)).xy;
+                }
                 // previous colour, slides out
                 FragColor += render_tile(fl_coord_a, prev_base, sf_rot, is_centre, is_edge, is_corner);
     
@@ -282,7 +336,13 @@ void main() {
 
     }
     else{
-        FragColor = vec4(1.0,0.0,0.0, 1.0);
+        vec2 grid = px_pos / 20;
+        if (mod(grid.x + floor(mod(grid.y, 2)), 2) < 1){
+            FragColor = vec4(0.0,0.0,0.0, 1.0);
+        }
+        else{
+            FragColor = vec4(1.0,0.0,1.0, 1.0);
+        }
     }
     tFragColor = FragColor.rgb;
 }
