@@ -1,6 +1,7 @@
 #version 330 core
 in vec2 px_pos;
 uniform float u_facelet_px;
+uniform float u_global_time;
 uniform float u_anim_pos;
 uniform uint u_prev_colours[54];
 uniform uint u_cur_colours[54];
@@ -26,6 +27,13 @@ float bulge(float a){
     if (a > 0.5){return 0.0;}
     a = a*2.0;
     return 1.0-a*a*a*a;
+}
+
+float bulge2(float a){
+    if (a < -0.5){return 0.0;}
+    if (a > 0.5){return 0.0;}
+    a = a*2.0;
+    return 1.0-a*a;
 }
 
 mat3 translate(float x, float y){
@@ -96,8 +104,158 @@ vec4 arrowhead(vec2 fl_coord, vec3 base, uint rot){
 }
 
 
-vec4 render_tile(vec2 fl_coord, vec3 base, uint rot, bool is_centre, bool is_edge, bool is_corner){
-    vec3 c = base * bulge(fl_coord.x) * bulge(fl_coord.y);
+// ===============================================
+float logi(float x, float L, float k){
+  float ex = -k*x;
+  return L / (1+(exp(ex)));
+}
+
+vec3 red_spot(vec3 col, vec2 centre, vec2 uv, float edge, vec2 scale){
+    vec2 d1 = centre - (uv);
+    d1.y*=1.6;
+    float d1m = sqrt((d1.x*d1.x) + (d1.y*d1.y));
+    float l = logi(((edge*1.3)-d1m)/1.0, 1, 100);
+    float a = (1.0-(l*0.3));
+    return vec3(
+      max(l,col.r),
+      col.g*a,
+      col.b*a
+    );
+}
+
+vec3 bands(float f, vec2 spot_centre, vec2 uv, float spot_radius, vec2 scale){
+     const int NUM_COLS = 13;
+     vec4 cols[NUM_COLS];
+     cols[0] = vec4(0.49,0.42,0.31,    0.0);
+     cols[1] = vec4(0.42,0.34,0.20,    0.13);
+     cols[2] = vec4(0.525,0.482,0.369, 0.25);
+     cols[3] = vec4(0.74,0.74,0.74,    0.28);
+     cols[4] = vec4(0.525,0.482,0.369, 0.32);
+     cols[5] = vec4(0.74,0.74,0.74,    0.34);
+     cols[6] = vec4(0.78,0.506,0.427,  0.38);
+     cols[7] = vec4(0.945,0.702,0.447, 0.5);
+     cols[8] = vec4(0.74,0.74,0.74,    0.6);
+     cols[9] = vec4(0.745,0.537,0.431, 0.68);
+     cols[10] = vec4(0.74,0.74,0.74,    0.75);
+     cols[11] = vec4(0.525,0.482,0.369,1.0);
+     cols[12] = vec4(0.525,0.482,0.369,2.0);
+     int c1 = 0;
+     int c2 = 1;
+     for (int i = 0; i < NUM_COLS-1; i++){
+         if (f >= cols[i].a && f <= cols[i+1].a){
+             c1 = i;
+             c2 = i+1;
+         }
+     }
+     float d = cols[c2].a - cols[c1].a;
+     float p = f - cols[c1].a;
+     float c2m = p/d;
+     float c1m = 1.0-c2m;
+     return red_spot( ((cols[c1] * c1m) +
+      (cols[c2] * c2m)).rgb, spot_centre, uv, spot_radius*1.2, scale);
+}
+
+vec2 rot(vec2 a, float t){
+     float ct = cos(t);
+     float st = sin(t);
+     return a * mat2(
+         ct, -st,
+         st, ct
+     );
+}
+
+vec2 swirl(vec2 centre, vec2 uv, float factor, float edge){
+    vec2 d1 = centre - uv;
+    float d1m = sqrt((d1.x*d1.x) + (d1.y*d1.y));
+    float i = ((3.141/2)-d1m);
+    if (i<0){i=0;}
+    i=tan(clamp(i,0.0,3.141/2))*0.1;
+    float l = logi((edge-d1m)/1.0, 1, 100);
+    uv = rot(d1,(3.141592)+(i*factor*l))+centre;
+    return uv;
+}
+
+float chaos(float x){  
+  return mod(
+  sin(x)+
+  sin(3.3*x)+
+  sin(5.8*x)+
+  sin(2.5*x)+
+  sin(30*x),1.0);
+}
+
+float bchaos(float x){  
+  return (
+  sin(x)+
+  sin(3.3*x)+
+  sin(5.8*x)+
+  sin(2.5*x)+
+  sin(30*x)
+  )/5.0;
+}
+
+vec2 anoise2(float x){
+  return vec2(chaos(x), chaos(chaos(x)*200.0));
+}
+
+vec3 fuzzy(vec3 c, vec2 uv){
+  // TODO interesting filter
+  return vec3(
+    c.r,
+    c.g,
+    c.b
+  );
+}
+
+vec4 jupiter(vec2 uv){
+    float edgelen = u_facelet_px * 3;
+    vec2 iResolution = vec2(edgelen, edgelen);
+    float iTime = u_global_time;
+    vec4 fragColor = vec4(1,1,1,1);
+    uv -= vec2(0.5,0.5);
+    vec2 uv_noswirl = uv;
+    float d = uv.x * uv.x + uv.y * uv.y;
+    vec3 col = vec3(1,0.63,0); // Main jupiter background colour
+    vec2 spot_centre = vec2(clamp(-mod(iTime*0.1,2)+1, -0.7,0.7),-0.14);
+    float spot_radius = 0.1;
+    vec2 scale = vec2(1,1);
+    uv.y += bchaos((iTime*0.1)+uv.x)*0.02;
+    uv = swirl(spot_centre,uv,1+(sin(iTime)*0.3),spot_radius);
+    for (int i = 0; i< 100; i++){
+      vec2 c = anoise2(float(i))-vec2(0.5,0.5);
+      c.x*=2;
+      c.x = mod(c.x-(iTime*0.2),2.0)-1;
+      uv = swirl(c,uv,(sin(iTime+float(i))*0.5),abs(chaos(i))*0.05);
+    }
+    float p = 1.0-(uv.y+0.5);
+    if (d < 0.25){
+         col = bands(p, spot_centre, uv, spot_radius,scale);
+    }
+     
+    col = fuzzy(col,uv_noswirl);
+    fragColor = vec4(col,1.0);
+    return fragColor;
+}
+
+//==========================================================
+
+
+vec4 render_tile(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot, bool is_centre, bool is_edge, bool is_corner){
+    vec3 c = vec3(0.0,0.0,0.0);
+    bool mask = (fl_coord.x > -0.5 && fl_coord.x < 0.5) && (fl_coord.y > -0.5 && fl_coord.y < 0.5);
+    if (face_id == 5u){
+        if (mask){
+            vec2 uv = fl_coord;
+            mat3 r = rotate(PI/2);
+            uv.y = 0.0-uv.y;
+            uv = (vec3(uv,1.0) * r).xy;
+            uv += vec2(0.5,0.5);
+            c = jupiter(uv).rgb * bulge(fl_coord.x) * bulge(fl_coord.y);;
+        }
+    }
+    else{
+        c = base * bulge(fl_coord.x) * bulge(fl_coord.y);
+    }
 
     if (u_debug_arrow > 0u && !is_centre){
         vec3 cfl = vec3(fl_coord,1.0);
@@ -119,9 +277,9 @@ vec4 render_tile(vec2 fl_coord, vec3 base, uint rot, bool is_centre, bool is_edg
     return vec4(c,1.0);
 }
 
-vec4 render_tile_centre(vec2 fl_coord, vec3 base, uint rot){ return render_tile(fl_coord, base, rot, true, false, false); }
-vec4 render_tile_edge(vec2 fl_coord, vec3 base, uint rot){ return render_tile(fl_coord, base, rot, false, true, false); }
-vec4 render_tile_corner(vec2 fl_coord, vec3 base, uint rot){ return render_tile(fl_coord, base, rot, false, false, true); }
+vec4 render_tile_centre(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, true, false, false); }
+vec4 render_tile_edge(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, false, true, false); }
+vec4 render_tile_corner(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, false, false, true); }
 
 bool adjacent(uint f1, uint sf1 ,uint f2){
     return (u_adjacent[(f1*9u)+sf1] & (1u<<f2)) > 0u;
@@ -163,8 +321,10 @@ void main() {
         uint j = u_mapping[i];
 
         // Get the base colour for this facelet and the one before this twist
-        vec3 base = u_base_cols[u_cur_colours[j]];
-        vec3 prev_base = u_base_cols[u_prev_colours[j]];
+        uint cur_face_id = u_cur_colours[j];
+        uint prev_face_id = u_prev_colours[j];
+        vec3 base = u_base_cols[cur_face_id];
+        vec3 prev_base = u_base_cols[prev_face_id];
         
         vec2 fl_coord = vec2(px_pos.x - (ix*u_facelet_px), px_pos.y - (iy*u_facelet_px)) / u_facelet_px;
         fl_coord -= vec2(0.5,0.5);
@@ -179,51 +339,60 @@ void main() {
             if (is_centre){
                 mat3 rot = rotate(a);
                 vec2 fl_coord1 = (vec3(fl_coord,1.0) * rot).xy;
-                FragColor += render_tile(fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(cur_face_id, sf, f, fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
                 vec3 r = vec3(1.0,0.0,1.0) * rotate(sf_rot * PI/2);
-                vec3 edge_base1 = u_base_cols[u_prev_colours[get_index(f, 1u)]];
-                vec3 edge_base2 = u_base_cols[u_prev_colours[get_index(f, 3u)]];
-                vec3 edge_base3 = u_base_cols[u_prev_colours[get_index(f, 7u)]];
-                vec3 edge_base4 = u_base_cols[u_prev_colours[get_index(f, 5u)]];
+                uint edge_id_1 = u_prev_colours[get_index(f, 1u)];
+                uint edge_id_2 = u_prev_colours[get_index(f, 3u)];
+                uint edge_id_3 = u_prev_colours[get_index(f, 7u)];
+                uint edge_id_4 = u_prev_colours[get_index(f, 5u)];
+                vec3 edge_base1 = u_base_cols[edge_id_1];
+                vec3 edge_base2 = u_base_cols[edge_id_2];
+                vec3 edge_base3 = u_base_cols[edge_id_3];
+                vec3 edge_base4 = u_base_cols[edge_id_4];
                 vec3 edge_coord1 = vec3(fl_coord,1.0) * rotate(a) * translate(-r.x,r.y);
                 vec3 edge_coord2 = vec3(fl_coord,1.0) * rotate(a + (1*PI/2)) * translate(-r.x,r.y);
                 vec3 edge_coord3 = vec3(fl_coord,1.0) * rotate(a + (2*PI/2)) * translate(-r.x,r.y);
                 vec3 edge_coord4 = vec3(fl_coord,1.0) * rotate(a + (3*PI/2)) * translate(-r.x,r.y);
-                FragColor += render_tile_edge(edge_coord1.xy, edge_base1, 0u);
-                FragColor += render_tile_edge(edge_coord2.xy, edge_base2, 0u);
-                FragColor += render_tile_edge(edge_coord3.xy, edge_base3, 0u);
-                FragColor += render_tile_edge(edge_coord4.xy, edge_base4, 0u);
+                FragColor += render_tile_edge(edge_id_1, 1u, f, edge_coord1.xy, edge_base1, 0u);
+                FragColor += render_tile_edge(edge_id_2, 3u, f, edge_coord2.xy, edge_base2, 0u);
+                FragColor += render_tile_edge(edge_id_3, 7u, f, edge_coord3.xy, edge_base3, 0u);
+                FragColor += render_tile_edge(edge_id_4, 5u, f, edge_coord4.xy, edge_base4, 0u);
             }
             if (is_edge) {
                 vec3 r = vec3(1.0,0.0,1.0) * rotate(sf_rot * PI/2);
                 // edge 1
                 mat3 rot = translate(-r.x,r.y) * rotate(a2) * translate(r.x,-r.y);
                 vec2 fl_coord1 = (vec3(fl_coord,1.0) * rot).xy;
-                FragColor += render_tile(fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(cur_face_id, sf, f, fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
                 // edge 2
                 mat3 rot2 = translate(-r.x,r.y) * rotate(a) * translate(r.x,-r.y);
                 vec2 fl_coord2 = (vec3(fl_coord,1.0) * rot2).xy;
-                FragColor += render_tile(fl_coord2, prev_base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(prev_face_id, sf, f, fl_coord2, prev_base, sf_rot, is_centre, is_edge, is_corner);
 
                 uint centre_index = get_index(f, 4u);
-                vec3 centre_base = u_base_cols[u_cur_colours[centre_index]];
+                uint centre_id = u_cur_colours[centre_index];
+                vec3 centre_base = u_base_cols[centre_id];
                 vec3 centre_coord = vec3(fl_coord,1.0) * translate(-r.x,r.y) * rotate(a);
-                FragColor += render_tile_centre(centre_coord.xy, centre_base, 0u);
+                FragColor += render_tile_centre(centre_id, 4u, f, centre_coord.xy, centre_base, 0u);
 
                 
                 vec3 r2 = vec3(1.0,1.0,1.0) * rotate((-sf_rot+3u) * PI/2);
                 uint corner_index = get_index(f, sf_cw[sf]);
-                vec3 corner_base = u_base_cols[u_cur_colours[corner_index]];
+                uint corner_id = u_cur_colours[corner_index];
+                vec3 corner_base = u_base_cols[corner_id];
                 vec3 corner_coord = centre_coord + r2;
-                uint corner_rotation = (sf_rot+1u)%4u;;
-                FragColor += render_tile_corner(corner_coord.xy, corner_base, corner_rotation);
+                uint corner_rotation = (sf_rot+1u)%4u;
+                // TODO do not hard code subface id 0 in this next line
+                FragColor += render_tile_corner(corner_id, 0u, f, corner_coord.xy, corner_base, corner_rotation);
 
                 vec3 r3 = vec3(-1.0,1.0,1.0) * rotate((-sf_rot+3u) * PI/2);
                 uint corner_index2 = get_index(f, sf_ccw[sf]);
-                vec3 corner_base2 = u_base_cols[u_cur_colours[corner_index2]];
+                uint corner_id_2 = u_cur_colours[corner_index2];
+                vec3 corner_base2 = u_base_cols[corner_id_2];
                 vec3 corner_coord2 = centre_coord + r3;
-                uint corner_rotation2 = (sf_rot+2u)%4u;;
-                FragColor += render_tile_corner(corner_coord2.xy, corner_base2, corner_rotation2);
+                uint corner_rotation2 = (sf_rot+2u)%4u;
+                // TODO do not hard code subface id 2 in this next line
+                FragColor += render_tile_corner(corner_id_2, 2u, f, corner_coord2.xy, corner_base2, corner_rotation2);
 
             }
             if (is_corner) {
@@ -231,32 +400,36 @@ void main() {
                 // Corner 1
                 mat3 rot = translate(-r.x,r.y) * rotate(a2) * translate(r.x,-r.y);
                 vec2 fl_coord1 = (vec3(fl_coord,1.0) * rot).xy;
-                FragColor += render_tile(fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(cur_face_id, sf, f, fl_coord1, base, sf_rot, is_centre, is_edge, is_corner);
                 // Corner 2
                 mat3 rot2 = translate(-r.x,r.y) * rotate(a) * translate(r.x,-r.y);
                 vec2 fl_coord2 = (vec3(fl_coord,1.0) * rot2).xy;
-                FragColor += render_tile(fl_coord2, prev_base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(prev_face_id, sf, f, fl_coord2, prev_base, sf_rot, is_centre, is_edge, is_corner);
                 // Edge
                 vec3 centre_coord = vec3(fl_coord,1.0) * translate(-r.x,r.y) * rotate(a);
 
                 vec3 r2 = vec3(0.0,1.0,1.0) * rotate((-sf_rot+3u) * PI/2);
                 uint edge_index = get_index(f, sf_cw[sf]);
                 vec3 edge_coord = centre_coord + r2;
-                vec3 edge_base = u_base_cols[u_cur_colours[edge_index]];
+                uint edge_id = u_cur_colours[edge_index];
+                vec3 edge_base = u_base_cols[edge_id];
                 uint edge_rotation = sf_rot;
-                FragColor += render_tile_edge(edge_coord.xy, edge_base, edge_rotation);
+                // TODO do not hard code subface id 1 in this next line
+                FragColor += render_tile_edge(edge_id, 1u, f, edge_coord.xy, edge_base, edge_rotation);
 
                 vec3 r3 = vec3(-1.0,0.0,1.0) * rotate((-sf_rot+3u) * PI/2);
                 uint edge_index2 = get_index(f, sf_ccw[sf]);
                 vec3 edge_coord2 = centre_coord + r3;
-                vec3 edge_base2 = u_base_cols[u_cur_colours[edge_index2]];
+                uint edge_id2 = u_cur_colours[edge_index2];
+                vec3 edge_base2 = u_base_cols[edge_id2];
                 uint edge_rotation2 = (sf_rot+1u)%4u;
-                FragColor += render_tile_edge(edge_coord2.xy, edge_base2, edge_rotation2);
+                // TODO do not hard code subface id 1 in this next line
+                FragColor += render_tile_edge(edge_id2, 1u, f, edge_coord2.xy, edge_base2, edge_rotation2);
             }
         }
         else{
             if (u_anim_pos >= 1.0 || !adjacent(f, sf, u_twist_face)){
-                FragColor += render_tile(fl_coord, base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(cur_face_id, sf, f, fl_coord, base, sf_rot, is_centre, is_edge, is_corner);
             }
             else {
                 // This is the code path for tiles around the edge of a face that is twisting.
@@ -304,14 +477,17 @@ void main() {
                     fl_coord_a4= (vec4(fl_coord3_a4, 1.0) * translate4(-fd,-fd,-d) * rotate4(0.0,u_anim_pos*(PI/2),0.0) * translate4(fd,fd,d)).xy;
                 }
                 // previous colour, slides out
-                FragColor += render_tile(fl_coord_a, prev_base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(prev_face_id, sf, f, fl_coord_a, prev_base, sf_rot, is_centre, is_edge, is_corner);
     
                 // two intermediate colours slide through
-                FragColor += render_tile(fl_coord_a3, u_base_cols[u_prev_colours[other_col_b]], sf_rot, is_centre, is_edge, is_corner);
-                FragColor += render_tile(fl_coord_a4, u_base_cols[u_prev_colours[other_col_a]], sf_rot, is_centre, is_edge, is_corner);
+                uint other_face_b_id = u_prev_colours[other_col_b];
+                uint other_face_a_id = u_prev_colours[other_col_a];
+                // TODO what is the subface for each of these
+                FragColor += render_tile(other_face_a_id, 1u, f, fl_coord_a3, u_base_cols[other_face_b_id], sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(other_face_b_id, 2u, f, fl_coord_a4, u_base_cols[other_face_a_id], sf_rot, is_centre, is_edge, is_corner);
 
                 // next colour, slides in
-                FragColor += render_tile(fl_coord_a2, base, sf_rot, is_centre, is_edge, is_corner);
+                FragColor += render_tile(cur_face_id, sf, f, fl_coord_a2, base, sf_rot, is_centre, is_edge, is_corner);
             }
         }
         if (is_centre && (u_debug_arrow > 0u)){

@@ -371,12 +371,12 @@ impl Read for CubeDevice{
                     //  //sequence.push(Twist::from_string("U").unwrap());
                     //  //sequence.push(Twist::from_string("L").unwrap());
                     //}
-                    for _ in 0..20{
-                        sequence.push(Twist::get_random())
-                    }
-                    for i in 0..20{
-                        sequence.push(sequence[19-i].inverse())
-                    }
+                    //for _ in 0..20{
+                    //    sequence.push(Twist::get_random())
+                    //}
+                    //for i in 0..20{
+                    //    sequence.push(sequence[19-i].inverse())
+                    //}
                     *next_twist = Instant::now() + Duration::from_millis(5000);
                 }
                 while *next_twist < Instant::now() {
@@ -642,6 +642,7 @@ shader_struct!{
         // uniforms go here
         u_screen_transform: UniformMat4F,
         u_anim_pos: Uniform1F,
+        u_global_time: Uniform1F,
         u_facelet_px: Uniform1F,
         u_prev_colours: Uniform1UIV,
         u_cur_colours: Uniform1UIV,
@@ -696,7 +697,7 @@ fn jumbotron_thread_main(
     let mut winw = width;
     let mut winh = height;
     if show_preview{
-        winh = (winh as f32 * 2.5) as u32;
+        winw = (winw as f32 * 1.5) as u32;
     }
     const start_fullscreen: bool = false;
 
@@ -972,6 +973,8 @@ fn jumbotron_thread_main(
         
         shader.u_debug_arrow.set(if debug {1} else {0});
         shader.u_anim_style.set(0);
+        let timefloat = start_time.elapsed().as_millis() as f32 / 1000.0;
+        shader.u_global_time.set(timefloat);
 
         unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
         
