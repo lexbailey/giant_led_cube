@@ -279,12 +279,12 @@ impl<T> BufferObject<T>{
     }
 }
 
-pub struct VertexAttributeObject{
+pub struct VertexArrayObject{
     gl_id: GLuint,
     //buffers: Vec<Rc<BufferObject<T>>>,
 }
 
-impl VertexAttributeObject{
+impl VertexArrayObject{
     pub fn new() -> Self{
         let mut gl_id = 0;
         unsafe {gl::GenVertexArrays(1, &mut gl_id);}
@@ -342,12 +342,12 @@ fn normalise(a: [f32;3]) -> [f32;3]{
 }
 
 pub struct TriangleMesh{
-    vao: VertexAttributeObject,
+    vao: VertexArrayObject,
     vbuf: BufferObject<f32>,
     _nbuf: BufferObject<f32>,
     _cbuf: BufferObject<i32>,
     num_triangles: usize,
-    wire_vao: Option<VertexAttributeObject>,
+    wire_vao: Option<VertexArrayObject>,
 }
 
 impl TriangleMesh{
@@ -375,7 +375,7 @@ impl TriangleMesh{
     }
 
     pub fn new(points: &Vec<Vec<f32>>, triangles: &Vec<Vec<usize>>, normals: Option<&Vec<Vec<f32>>>, colours: Option<&Vec<i32>>, offset: f32) -> Self{
-        let mut vao = VertexAttributeObject::new();
+        let mut vao = VertexArrayObject::new();
 
         let mut tx = 0.0;
         let mut ty = 0.0;
@@ -469,7 +469,7 @@ impl TriangleMesh{
             line_array.extend_from_slice(p0);
         }
 
-        let mut wire_cube = VertexAttributeObject::new();
+        let mut wire_cube = VertexArrayObject::new();
         let wire_verts = BufferObject::new(line_array, gl::ARRAY_BUFFER, gl::STATIC_DRAW);
         wire_cube.add_buffer(&wire_verts, 0, 3, gl::FALSE, std::ptr::null());
         self.wire_vao = Some(wire_cube);

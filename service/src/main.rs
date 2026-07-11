@@ -749,26 +749,15 @@ fn jumbotron_thread_main(
         width as f32, height as f32,
     ];
 
-    let mut vbo = 0;
-    let mut verts = 0;
-    unsafe{ gl::GenVertexArrays(1, &mut verts); gl::GenBuffers(1, &mut vbo); }
-    let bind_screen_rect = ||unsafe { gl::BindVertexArray(verts); gl::BindBuffer(gl::ARRAY_BUFFER, vbo); };
+    let mut verts = VertexArrayObject::new();
+    let vbo = BufferObject::new(vert_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+    verts.add_buffer(&vbo, 0, 2, gl::FALSE, ptr::null());
 
     let mut data_texture = 0;
     let mut data_buffer = 0;
+    // position attribute
+
     unsafe{
-        bind_screen_rect();
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
-            &vert_array[0] as *const f32 as *const c_void,
-            gl::STATIC_DRAW,
-        );
-
-        // position attribute
-        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
-        gl::EnableVertexAttribArray(0);
-
         // put the data table in place
         gl::GenTextures(1, &mut data_texture);
         gl::GenBuffers(1, &mut data_buffer);
@@ -804,58 +793,17 @@ fn jumbotron_thread_main(
         1.0,0.0,
     ];
 
-    let mut fl_verts = 0;
-    let mut fl_vbo = 0;
-    let mut fl_nbo = 0;
-    let mut fl_uvbo = 0;
     let mut cube_framebuffer = 0;
     let mut cube_texture = 0;
+
+    let mut fl_verts = VertexArrayObject::new();
+    let fl_vbo = BufferObject::new(facelet_vert_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+    let fl_nbo = BufferObject::new(facelet_norm_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+    let fl_uvbo = BufferObject::new(facelet_uv_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+    fl_verts.add_buffer(&fl_vbo, 0, 3, gl::FALSE, ptr::null());
+    fl_verts.add_buffer(&fl_nbo, 1, 3, gl::FALSE, ptr::null());
+    fl_verts.add_buffer(&fl_uvbo, 2, 2, gl::FALSE, ptr::null());
     unsafe{
-        gl::GenVertexArrays(1, &mut fl_verts);
-        gl::GenBuffers(1, &mut fl_vbo);
-        gl::GenBuffers(1, &mut fl_nbo);
-        gl::GenBuffers(1, &mut fl_uvbo);
-    }
-    let bind_cube_facelet = ||unsafe {
-        gl::BindVertexArray(fl_verts);
-    };
-
-    unsafe{
-        gl::BindVertexArray(fl_verts);
-        // position attribute
-        gl::EnableVertexAttribArray(0);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_vbo);
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (facelet_vert_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
-            &facelet_vert_array[0] as *const f32 as *const c_void,
-            gl::STATIC_DRAW,
-        );
-        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
-
-
-        // normal attribute
-        gl::EnableVertexAttribArray(1);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_nbo);
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (facelet_norm_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
-            &facelet_norm_array[0] as *const f32 as *const c_void,
-            gl::STATIC_DRAW,
-        );
-        gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 3) as GLsizei, ptr::null());
-
-        // uv attribute
-        gl::EnableVertexAttribArray(2);
-        gl::BindBuffer(gl::ARRAY_BUFFER, fl_uvbo);
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (facelet_uv_array.len() * mem::size_of::<GLfloat>()) as GLsizeiptr,
-            &facelet_uv_array[0] as *const f32 as *const c_void,
-            gl::STATIC_DRAW,
-        );
-        gl::VertexAttribPointer(2, 2, gl::FLOAT, gl::FALSE, (mem::size_of::<GLfloat>() * 2) as GLsizei, ptr::null());
-        
         gl::GenFramebuffers(1, &mut cube_framebuffer);
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
         gl::GenTextures(1, &mut cube_texture);
@@ -916,7 +864,7 @@ fn jumbotron_thread_main(
         // Draw here
         unsafe { gl::Viewport(0,0,winw as i32,winh as i32); }
         shader.use_();
-        bind_screen_rect();
+        verts.bind();
         shader.u_facelet_px.set(fp as f32);
         shader.u_base_cols.set(&[
             1.0,1.0,1.0, // white
@@ -1041,7 +989,7 @@ fn jumbotron_thread_main(
                 0.0,0.0,0.0, // black (for blank cells)
             ]);
             preview_cube.u_border_size.set(if debug {0.05} else {-0.1});
-            bind_cube_facelet();
+            fl_verts.bind();
             let sf = 0.3;
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
             let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
