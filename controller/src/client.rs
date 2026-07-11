@@ -300,7 +300,7 @@ fn handle_responses<T: Read>(stream: &mut T, events: Sender<Event>) {
             ,Err(e) => { println!("Error: {:?}", e); }
         }
     }
-    events.send(Event::Disconnected());
+    let _ = events.send(Event::Disconnected()); // best effort, ignore errors
 }
 
 impl<T: Read + Write, C: Connector + Default> Messenger<T, C>{

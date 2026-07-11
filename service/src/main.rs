@@ -787,9 +787,6 @@ fn jumbotron_thread_main(
         1.0,0.0,
     ];
 
-    let mut cube_framebuffer = 0;
-    let mut cube_texture = 0;
-
     let mut fl_verts = VertexArrayObject::new();
     let fl_vbo = BufferObject::new(facelet_vert_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
     let fl_nbo = BufferObject::new(facelet_norm_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
@@ -797,6 +794,9 @@ fn jumbotron_thread_main(
     fl_verts.add_buffer(&fl_vbo, 0, 3, gl::FALSE, ptr::null());
     fl_verts.add_buffer(&fl_nbo, 1, 3, gl::FALSE, ptr::null());
     fl_verts.add_buffer(&fl_uvbo, 2, 2, gl::FALSE, ptr::null());
+
+    let mut cube_framebuffer = 0;
+    let mut cube_texture = 0;
     unsafe{
         gl::GenFramebuffers(1, &mut cube_framebuffer);
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);

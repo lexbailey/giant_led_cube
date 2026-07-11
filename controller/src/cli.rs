@@ -319,9 +319,9 @@ fn main() {
                                             TwistMode::Server() => {
                                                 if let Ok(t) = cube_model::Twist::seq_from_string(args_str){
                                                     for t in t{
-                                                        sender.send(DoTwist(t));
+                                                        sender.send(DoTwist(t))?;
                                                     }
-                                                    sender.send(GetState());
+                                                    sender.send(GetState())?;
                                                 }
                                                 else{
                                                     mprintln!(p, "Invalid twist sequence.");
@@ -382,7 +382,6 @@ fn main() {
                                             mprintln!(p, "rot requires two parameters");
                                         }
                                         else{
-                                            let state = state.lock().unwrap();
                                             if let Ok((f, s)) = (||{
                                                 Result::<(usize, usize), std::num::ParseIntError>::Ok((
                                                     usize::from_str(args[0])?
@@ -415,13 +414,13 @@ fn main() {
         let readline = rl.readline("Cube Control> ");
         match readline {
             Ok(line) => {
-                rl.add_history_entry(line.as_str());
+                let _ = rl.add_history_entry(line.as_str()); // best-effort, ignore errors
                 for line in line.lines(){
                     match u_sender.send(UserInput(line.to_string())){
                         Err(e) => {println!("Internal error: {:?}", e);}
                         ,Ok(_) => {}
                     }
-                    if let Err(e) = sync_receiver.recv(){
+                    if let Err(_e) = sync_receiver.recv(){
                         // other end disconnected, normally because of graceful exit. terminate.
                         break 'repl
                     }
