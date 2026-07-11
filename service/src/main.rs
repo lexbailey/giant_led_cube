@@ -622,6 +622,45 @@ shader_struct!{
 
 #[cfg(feature="output_mode_jumbotron")]
 shader_struct!{
+    ScreenMapper,
+    r#"
+        #version 330 core
+        layout (location = 0) in vec4 aPos;
+        uniform mat4 u_screen_transform;
+        out vec2 px_pos;
+        void main() {
+            gl_Position = aPos * u_screen_transform;
+            px_pos = aPos.xy;
+        }
+    "#,
+    r#"
+        #version 330 core
+        in vec2 px_pos;
+        uniform sampler2D u_texture;
+        uniform mat4 u_texture_transform;
+        uniform vec2 u_facelet_coords;
+        out vec4 FragColor;
+        void main() {
+            //vec2 tc = (vec4(u_facelet_coords.xy+UV,0.0,0.0)*u_texture_transform).xy;
+            FragColor = texture(u_texture,px_pos/vec2(12*128,9*128));
+            //FragColor = vec4(0.0,0.0,0.0,1.0);
+            if (mod((px_pos.x + px_pos.y)/100, 2.0) < 0.3) {
+                FragColor = vec4(1.0,0.0,0.0,1.0);
+            }
+        }
+    "#,
+    {
+        // uniforms go here
+        u_screen_transform: UniformMat4F,
+        u_transform: UniformMat4F,
+        u_texture: UniformSampler2D,
+        u_texture_transform: UniformMat4F,
+        u_facelet_coords: Uniform2F,
+    }
+}
+
+#[cfg(feature="output_mode_jumbotron")]
+shader_struct!{
     Shader
     ,r#"
         #version 330 core
@@ -690,6 +729,8 @@ fn jumbotron_thread_main(
     let nh = 5;
     let width = fp * nw;
     let height = fp * nh;
+    let net_width = fp * 12;
+    let net_height = fp * 9;
     let mut winw = width;
     let mut winh = height;
     if show_preview{
@@ -735,12 +776,13 @@ fn jumbotron_thread_main(
 
     let shader = Shader::new();
     let preview_cube = PreviewCube::new();
+    let mapper = ScreenMapper::new();
 
     let vert_array: [f32;8] = [
-        width as f32, 0.0,
+        net_width as f32, 0.0,
         0.0, 0.0,
-        0.0, height as f32,
-        width as f32, height as f32,
+        0.0, net_height as f32,
+        net_width as f32, net_height as f32,
     ];
 
     let mut verts = VertexArrayObject::new();
@@ -802,7 +844,7 @@ fn jumbotron_thread_main(
         gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
         gl::GenTextures(1, &mut cube_texture);
         gl::BindTexture(gl::TEXTURE_2D, cube_texture);
-        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, width as i32, height as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, ptr::null());
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, net_width as i32, net_height as i32, 0, gl::RGB, gl::UNSIGNED_BYTE, ptr::null());
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
         gl::FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, cube_texture, 0);
@@ -856,7 +898,7 @@ fn jumbotron_thread_main(
             }
         }
         // Draw here
-        unsafe { gl::Viewport(0,0,winw as i32,winh as i32); }
+        unsafe { gl::Viewport(0,0,net_width as i32,net_height as i32); }
         shader.use_();
         verts.bind();
         shader.u_facelet_px.set(fp as f32);
@@ -875,7 +917,7 @@ fn jumbotron_thread_main(
             0.0,0.0,1.0,0.0,
             0.0,0.0,0.0,1.0,
         ];
-        shader.u_screen_transform.set(false,&screen_transform);
+        //shader.u_screen_transform.set(false,&screen_transform);
         let cols: Vec<u32> = {
             let cube = cube_state.lock().unwrap();
             (0..54).map(|i|{
@@ -922,30 +964,37 @@ fn jumbotron_thread_main(
         let timefloat = start_time.elapsed().as_millis() as f32 / 1000.0;
         shader.u_global_time.set(timefloat);
 
-        unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
+        unsafe{
+            // turn the pixel data in the frame buffer in to a texture for the preview cube to use
+            gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            let tex_screen_transform = [
+                2.0/net_width as f32,0.0,0.0,-1.0,
+                0.0,-2.0/net_height as f32,0.0,1.0,
+                0.0,0.0,1.0,0.0,
+                0.0,0.0,0.0,1.0,
+            ];
+            shader.u_screen_transform.set(false,&tex_screen_transform);
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); // draw frame again, to texture this time
+            // back to normal render settings
+            gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
+            gl::Viewport(0,0,winw as i32,winh as i32);
+            gl::Clear(gl::DEPTH_BUFFER_BIT);
+        }
+        //shader.u_screen_transform.set(false,&screen_transform);
+        mapper.use_();
+        const texture_unit: i32 = 0;
+        mapper.u_texture.set(texture_unit);
+        unsafe{
+            gl::ActiveTexture(gl::TEXTURE0 + texture_unit as u32);
+            gl::BindTexture(gl::TEXTURE_2D, cube_texture);
+            mapper.u_screen_transform.set(false,&screen_transform);
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+        }
         
         if show_preview{
-
-            unsafe{
-                // turn the pixel data in the frame buffer in to a texture for the preview cube to use
-                gl::BindFramebuffer(gl::FRAMEBUFFER, cube_framebuffer);
-                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                gl::Viewport(0,0,width as i32,height as i32);
-                let tex_screen_transform = [
-                    2.0/width as f32,0.0,0.0,-1.0,
-                    0.0,-2.0/height as f32,0.0,1.0,
-                    0.0,0.0,1.0,0.0,
-                    0.0,0.0,0.0,1.0,
-                ];
-                shader.u_screen_transform.set(false,&tex_screen_transform);
-                gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); // draw frame again, to texture this time
-                // back to normal render settings
-                gl::BindFramebuffer(gl::FRAMEBUFFER, main_buffer);
-                gl::Viewport(0,0,winw as i32,winh as i32);
-                // always be in front of the previous rendering
-                gl::Clear(gl::DEPTH_BUFFER_BIT);
-            }
             preview_cube.use_();
+            preview_cube.u_texture.set(0);
             let fww = winw as f32;
             let fwh = winh as f32;
             let fw = width as f32;
