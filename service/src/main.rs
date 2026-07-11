@@ -59,6 +59,7 @@ struct CubeConfig{
     rotation_map: String,
     fullscreen: Option<bool>,
     show_preview: Option<bool>,
+    sound_enabled: Option<bool>,
 }
 
 enum DeviceEvent{
@@ -366,19 +367,12 @@ impl Read for CubeDevice{
             TestDevice{sequence, buffer, next_twist, ..} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
-                    //sequence.push(Twist::from_string("L").unwrap());
-                    //for _ in 0..200{
-                    //  sequence.push(Twist::from_string("F").unwrap());
-                    //  //sequence.push(Twist::from_string("F'").unwrap());
-                    //  //sequence.push(Twist::from_string("U").unwrap());
-                    //  //sequence.push(Twist::from_string("L").unwrap());
-                    //}
-                    //for _ in 0..20{
-                    //    sequence.push(Twist::get_random())
-                    //}
-                    //for i in 0..20{
-                    //    sequence.push(sequence[19-i].inverse())
-                    //}
+                    for _ in 0..20{
+                        sequence.push(Twist::get_random())
+                    }
+                    for i in 0..20{
+                        sequence.push(sequence[19-i].inverse())
+                    }
                     *next_twist = Instant::now() + Duration::from_millis(5000);
                 }
                 while *next_twist < Instant::now() {
@@ -1119,6 +1113,8 @@ fn main() {
 
     let secret = config.secret.as_bytes().to_vec();
 
+    let sound_enabled = config.sound_enabled.unwrap_or(true);
+
     let (sender, receiver) = channel::<Event>();
     let net_sender = sender.clone();
     let dev_sender = sender.clone();
@@ -1186,7 +1182,12 @@ fn main() {
     };
 
     let (sound_sender, sound_events) = channel::<Sound>();
-    //let sound_thread = std::thread::spawn(move||{ sound_thread_main(sound_events); });
+    let sound_thread = if sound_enabled {
+        Some(std::thread::spawn(move||{ sound_thread_main(sound_events); }))
+    }
+    else {
+        None
+    };
 
     let cube = Arc::new(Mutex::new(Cube::new()));
     let prev_cube = Arc::new(Mutex::new(Cube::new()));
@@ -1392,5 +1393,5 @@ fn main() {
     if let Some(t) = tcp_thread { let _ignored = t.join(); }
     if let Some(t) = serial_thread { let _ignored = t.join(); }
     sound_sender.send(Sound::NoMoreSounds()).expect("sound thread crashed?");
-    //let _ignored = sound_thread.join();
+    if let Some(t) = sound_thread { let _ignored = t.join(); }
 }
