@@ -57,6 +57,8 @@ struct CubeConfig{
     top_score: u128,
     facelet_px: Option<u32>,
     rotation_map: String,
+    fullscreen: Option<bool>,
+    show_preview: Option<bool>,
 }
 
 enum DeviceEvent{
@@ -686,10 +688,10 @@ fn jumbotron_thread_main(
         }
     }
 
-    // TODO make these config options
     let fp = config.facelet_px.unwrap_or(48);
+    let start_fullscreen = config.fullscreen.unwrap_or(false);
+    let show_preview = config.show_preview.unwrap_or(false);
     // always have a 5x9 arrangement of facelets
-    let show_preview = true;
     let nw = 9;
     let nh = 5;
     let width = fp * nw;
@@ -699,7 +701,6 @@ fn jumbotron_thread_main(
     if show_preview{
         winw = (winw as f32 * 1.5) as u32;
     }
-    const start_fullscreen: bool = false;
 
     println!("Starting video output...");
     use glfw::fail_on_errors;
@@ -722,6 +723,9 @@ fn jumbotron_thread_main(
     //glfw.set_swap_interval(glfw::SwapInterval::None);
     glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
     window.set_framebuffer_size_polling(true);
+
+    let (iwinw, iwinh) = window.get_framebuffer_size();
+    (winw, winh) = (iwinw as u32, iwinh as u32);
 
     unsafe{
         gl::Enable(gl::CULL_FACE);
