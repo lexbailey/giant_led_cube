@@ -1,4 +1,14 @@
 use gl::types::*;
+use std::marker::PhantomData;
+use {
+    std::mem,
+    std::ffi::c_void,
+};
+
+
+pub trait ShaderPipeline{
+    fn use_(&self);
+}
 
 macro_rules! uni_from {
     ($u:ident) => {
@@ -193,7 +203,9 @@ macro_rules! impl_shader{
                 }
                 shader
             }
+        }
 
+        impl gl_abstractions::ShaderPipeline for $t {
             fn use_(&self) {
                 unsafe {gl::UseProgram(self.shader_id);}
             }
@@ -218,4 +230,261 @@ macro_rules! shader_struct {
         );
     }
 }
+
+pub trait HasGLEnumValue{
+    fn get_enum() -> GLenum;
+}
+
+pub struct GLTypeEnum<T>{
+    _phantom: PhantomData<T>,
+}
+
+macro_rules! map_gl_enum_type {
+    ($typename:ty, $value:expr) => {
+        impl HasGLEnumValue for GLTypeEnum<$typename>{ fn get_enum() -> GLenum{ $value } }
+    }
+}
+
+map_gl_enum_type!(GLbyte, gl::BYTE);
+map_gl_enum_type!(GLubyte, gl::UNSIGNED_BYTE);
+map_gl_enum_type!(GLshort, gl::SHORT);
+map_gl_enum_type!(GLushort, gl::UNSIGNED_SHORT);
+map_gl_enum_type!(GLint, gl::INT);
+map_gl_enum_type!(GLuint, gl::UNSIGNED_INT);
+map_gl_enum_type!(GLfloat, gl::FLOAT);
+map_gl_enum_type!(GLdouble, gl::DOUBLE);
+// TODO I'm sure I missed a lot of useful ones
+
+pub struct BufferObject<T>{
+    gl_id: GLuint,
+    data: Vec<T>,
+}
+
+impl<T> BufferObject<T>{
+    pub fn new(data: Vec<T>, target: GLenum, usage: GLenum) -> Self{
+        let mut gl_id = 0;
+        unsafe {
+            gl::GenBuffers(1, &mut gl_id);
+            gl::BindBuffer(target, gl_id);
+            gl::BufferData(target, (data.len() * mem::size_of::<T>())as GLsizeiptr, &data[0] as *const T as *const c_void, usage);
+        }
+        Self{
+            gl_id,
+            data,
+        }
+    }
+
+    pub fn bind(&self, target: GLenum){
+        unsafe {gl::BindBuffer(target, self.gl_id);}
+    }
+}
+
+pub struct VertexAttributeObject{
+    gl_id: GLuint,
+    //buffers: Vec<Rc<BufferObject<T>>>,
+}
+
+impl VertexAttributeObject{
+    pub fn new() -> Self{
+        let mut gl_id = 0;
+        unsafe {gl::GenVertexArrays(1, &mut gl_id);}
+        Self{
+            gl_id,
+        }
+    }
+
+    pub fn add_buffer<T>(&mut self, buffer: &BufferObject<T>, index: GLuint, size: GLint, normalized: GLboolean, pointer: *const GLvoid) where GLTypeEnum<T>: HasGLEnumValue{
+        self.bind();
+        buffer.bind(gl::ARRAY_BUFFER);
+        unsafe{
+            gl::EnableVertexAttribArray(index);
+            gl::VertexAttribPointer(index, size, GLTypeEnum::<T>::get_enum(), normalized, (mem::size_of::<T>() * size as usize) as GLsizei, pointer);
+        }
+    }
+
+    pub fn add_buffer_i<T>(&mut self, buffer: &BufferObject<T>, index: GLuint, size: GLint, pointer: *const GLvoid) where GLTypeEnum<T>: HasGLEnumValue{
+        self.bind();
+        buffer.bind(gl::ARRAY_BUFFER);
+        unsafe{
+            gl::EnableVertexAttribArray(index);
+            gl::VertexAttribIPointer(index, size, GLTypeEnum::<T>::get_enum(), (mem::size_of::<T>() * size as usize) as GLsizei, pointer);
+        }
+    }
+
+    pub fn bind(&self){
+        unsafe {gl::BindVertexArray(self.gl_id);}
+    }
+}
+
+fn calculate_surface_normal(tri: &[f32]) -> [f32;3]{
+    let u = [
+        tri[(1*3)+0] - tri[(0*3)+0],
+        tri[(1*3)+1] - tri[(0*3)+1],
+        tri[(1*3)+2] - tri[(0*3)+2],
+    ];
+    let v = [
+        tri[(2*3)+0] - tri[(0*3)+0],
+        tri[(2*3)+1] - tri[(0*3)+1],
+        tri[(2*3)+2] - tri[(0*3)+2],
+    ];
+	[
+        (u[1]*v[2]) - (u[2]*v[1]),
+        (u[2]*v[0]) - (u[0]*v[2]),
+        (u[0]*v[1]) - (u[1]*v[0]),
+    ]
+
+}
+
+fn normalise(a: [f32;3]) -> [f32;3]{
+    let sqlen = (a[0]*a[0]) + (a[1]*a[1]) + (a[2]*a[2]);
+    let len = sqlen.sqrt();
+    [a[0]/len, a[1]/len, a[2]/len]
+}
+
+pub struct TriangleMesh{
+    vao: VertexAttributeObject,
+    vbuf: BufferObject<f32>,
+    _nbuf: BufferObject<f32>,
+    _cbuf: BufferObject<i32>,
+    num_triangles: usize,
+    wire_vao: Option<VertexAttributeObject>,
+}
+
+impl TriangleMesh{
+    fn mesh_to_vec(points: &Vec<Vec<f32>>, triangles: &Vec<Vec<usize>>, delta: (f32,f32,f32)) -> Vec<f32>{
+        let num_triangles = triangles.len();
+        let mut out_mesh = Vec::with_capacity(num_triangles*3);
+        for tri in triangles{
+            if tri.len() != 3{
+                panic!("Error: a triangle in the file is not of length 3");
+            }
+            for p_id in tri{
+                let point = &points[*p_id];
+                if point.len() != 3{
+                    panic!("Error: a point in the file does not have 3 coordinates.");
+                }
+                let x = point[0]+delta.0;
+                let y = point[1]+delta.1;
+                let z = point[2]+delta.2;
+                out_mesh.push(x);
+                out_mesh.push(y);
+                out_mesh.push(z);
+            }
+        }
+        out_mesh
+    }
+
+    pub fn new(points: &Vec<Vec<f32>>, triangles: &Vec<Vec<usize>>, normals: Option<&Vec<Vec<f32>>>, colours: Option<&Vec<i32>>, offset: f32) -> Self{
+        let mut vao = VertexAttributeObject::new();
+
+        let mut tx = 0.0;
+        let mut ty = 0.0;
+        let mut tz = 0.0;
+        for p in points{
+            tx += p[0];
+            ty += p[1];
+            tz += p[2];
+        }
+        let np = points.len() as f32;
+        tx /= np;
+        ty /= np;
+        tz /= np;
+        let centre = (tx,ty,tz);
+        let new_centre = (tx*offset, ty*offset, tz*offset);
+        let dx = new_centre.0 - centre.0;
+        let dy = new_centre.1 - centre.1;
+        let dz = new_centre.2 - centre.2;
+        let delta = (dx,dy,dz);
+
+        let num_triangles = triangles.len();
+        let verts = Self::mesh_to_vec(points, triangles, delta);
+
+        let mut norms = Vec::with_capacity(num_triangles*3);
+        let mut cols = Vec::with_capacity(num_triangles*3);
+        for i in 0..num_triangles{
+            if let Some(normals) = normals{
+                norms.extend_from_slice(&normals[i]);
+                norms.extend_from_slice(&normals[i]);
+                norms.extend_from_slice(&normals[i]);
+            }
+            else{
+                let a = normalise(calculate_surface_normal(&verts[i*9..(i+1)*9]));
+                norms.extend_from_slice(&a);
+                norms.extend_from_slice(&a);
+                norms.extend_from_slice(&a);
+            }
+            if let Some(colours) = colours{
+                cols.push(colours[i]);
+                cols.push(colours[i]);
+                cols.push(colours[i]);
+            }
+            else{
+                cols.push(-1);
+                cols.push(-1);
+                cols.push(-1);
+            }
+        }
+
+        let vbuf = BufferObject::new(verts, gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+        let nbuf = BufferObject::new(norms, gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+        let cbuf = BufferObject::new(cols, gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+        vao.add_buffer(&vbuf, 0, 3, gl::FALSE, std::ptr::null());
+        vao.add_buffer(&nbuf, 1, 3, gl::FALSE, std::ptr::null());
+        vao.add_buffer_i(&cbuf, 2, 1, std::ptr::null());
+        Self{
+            vao,
+            vbuf,
+            _nbuf: nbuf,
+            _cbuf: cbuf,
+            wire_vao: None,
+            num_triangles,
+        }
+    }
+
+    pub fn draw<S>(&self, shader: &S) where S: ShaderPipeline{
+        shader.use_();
+        self.vao.bind();
+        unsafe{
+            gl::DrawArrays(gl::TRIANGLES, 0, self.num_triangles as i32 * 3);
+        }
+    }
+
+    pub fn generate_wireframe(&mut self){
+        if self.wire_vao.is_some(){
+            return;
+        }
+        let mut line_array = Vec::with_capacity(self.num_triangles * 6);
+        for i in 0..self.num_triangles{
+            let a = &self.vbuf.data[i*9..(i+1)*9];
+            let p0 = &a[0..3];
+            let p1 = &a[3..6];
+            let p2 = &a[6..9];
+            line_array.extend_from_slice(p0);
+            line_array.extend_from_slice(p1);
+
+            line_array.extend_from_slice(p1);
+            line_array.extend_from_slice(p2);
+
+            line_array.extend_from_slice(p2);
+            line_array.extend_from_slice(p0);
+        }
+
+        let mut wire_cube = VertexAttributeObject::new();
+        let wire_verts = BufferObject::new(line_array, gl::ARRAY_BUFFER, gl::STATIC_DRAW);
+        wire_cube.add_buffer(&wire_verts, 0, 3, gl::FALSE, std::ptr::null());
+        self.wire_vao = Some(wire_cube);
+    }
+
+    pub fn draw_wireframe<S>(&self, shader: &S) where S: ShaderPipeline{
+        if let Some(wvao) = &self.wire_vao{
+            shader.use_();
+            wvao.bind();
+            unsafe{
+                gl::DrawArrays(gl::LINES, 0, self.num_triangles as i32 * 6);
+            }
+        }
+    }
+
+}
+
 
