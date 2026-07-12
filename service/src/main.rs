@@ -646,12 +646,46 @@ shader_struct!{
         in vec2 px_pos;
         uniform sampler2D u_texture;
         uniform mat4 u_texture_transform;
+        uniform float u_facelet_px;
         uniform vec2 u_facelet_coords;
+        uniform uint u_mapping[45];
+        uniform uint u_rotation_map[45];
         out vec4 FragColor;
+
+        vec2 get_xy_0(uint f){
+            if (f == 0u) {return vec2(3,3);}
+            if (f == 1u) {return vec2(3,6);}
+            if (f == 2u) {return vec2(2,3);}
+            if (f == 3u) {return vec2(5,2);}
+            if (f == 4u) {return vec2(6,5);}
+            return vec2(0,0);
+        }
+
+        vec2 get_xy(uint f, uint sf){
+            vec2 f0 = get_xy_0(f);
+            if (f == 0u || f == 1u) {f0.x += sf%3u; f0.y += sf/3u;};
+            if (f == 2u) {f0.x -= sf/3u; f0.y += sf%3u;};
+            if (f == 3u) {f0.x -= sf%3u; f0.y -= sf/3u;};
+            if (f == 4u) {f0.x += sf/3u; f0.y -= sf%3u;};
+            return f0;
+        }
+
         void main() {
             FragColor = vec4(0,0,0,1.0);
-            if (px_pos.x < (128*12)){
-                FragColor = texture(u_texture,px_pos/vec2(12*128,-9*128)*2);
+            vec2 pos = px_pos / u_facelet_px;
+            uint face = uint(floor(pos.y));
+            uint subface = uint(floor(pos.x));
+            uint id = face * 9u + subface;
+            uint mapped_id = u_mapping[id];
+            uint mapped_face = mapped_id/9u;
+            uint mapped_subface = mapped_id%9u;
+            vec2 xy = get_xy(mapped_face, mapped_subface);
+            //vec2 mod_px = vec2(uint(px_pos.x) % uint(u_facelet_px), uint(px_pos.y) % uint(u_facelet_px));
+            vec2 mod_px = mod(px_pos, u_facelet_px);
+            uint rotation = u_rotation_map[mapped_id];
+            if (px_pos.x < (u_facelet_px*9) && px_pos.y < (u_facelet_px*5)){
+                FragColor = vec4(1.0,1.0,1.0,1.0) * float(mapped_id)/45.0;
+                FragColor = texture(u_texture, ((xy * u_facelet_px) + mod_px)/(u_facelet_px * vec2(12,9)));
             }
         }
     "#,
@@ -661,7 +695,10 @@ shader_struct!{
         u_transform: UniformMat4F,
         u_texture: UniformSampler2D,
         u_texture_transform: UniformMat4F,
+        u_facelet_px: Uniform1F,
         u_facelet_coords: Uniform2F,
+        u_mapping: Uniform1UIV,
+        u_rotation_map: Uniform1UIV,
     }
 }
 
@@ -985,6 +1022,12 @@ fn jumbotron_thread_main(
             gl::Clear(gl::DEPTH_BUFFER_BIT);
         }
         mapper.use_();
+        mapper.u_facelet_px.set(fp as f32);
+        {
+            let lm = led_map.lock().unwrap();
+            mapper.u_mapping.set(&lm.indexmap);
+            mapper.u_rotation_map.set(&lm.rotationmap);
+        }
         const texture_unit: i32 = 0;
         mapper.u_texture.set(texture_unit);
         let screen_transform = [
@@ -1001,6 +1044,7 @@ fn jumbotron_thread_main(
         }
         
         if show_preview{
+            unsafe { gl::Clear(gl::DEPTH_BUFFER_BIT); }
             preview_cube.use_();
             preview_cube.u_texture.set(0);
             let fww = winw as f32;
