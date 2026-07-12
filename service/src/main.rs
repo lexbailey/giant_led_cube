@@ -956,6 +956,7 @@ fn jumbotron_thread_main(
         else{
             shader.u_anim_pos.set(1.0);
         }
+        shader.u_twist_face.set(99);
         if let Some(twist) = lt.twist{
             shader.u_twist_face.set(twist.face as u32);
             shader.u_twist_dir.set(if twist.reverse {-1.0} else {1.0});
