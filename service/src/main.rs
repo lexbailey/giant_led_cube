@@ -367,6 +367,18 @@ impl Read for CubeDevice{
             TestDevice{sequence, buffer, next_twist, ..} => {
                 if sequence.len() <= 0 {
                     // Generate a new sequence
+                    //for _ in 0..20{
+                    //    sequence.push(Twist::from_string("b").unwrap());
+                    //    sequence.push(Twist::from_string("b'").unwrap());
+                    //    //sequence.push(Twist::from_string("f").unwrap());
+                    //    //sequence.push(Twist::from_string("f'").unwrap());
+                    //    //sequence.push(Twist::from_string("l").unwrap());
+                    //    //sequence.push(Twist::from_string("l'").unwrap());
+                    //    //sequence.push(Twist::from_string("r").unwrap());
+                    //    //sequence.push(Twist::from_string("r'").unwrap());
+                    //    //sequence.push(Twist::from_string("u").unwrap());
+                    //    //sequence.push(Twist::from_string("u'").unwrap());
+                    //}
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
                     }
@@ -641,11 +653,9 @@ shader_struct!{
         uniform vec2 u_facelet_coords;
         out vec4 FragColor;
         void main() {
-            //vec2 tc = (vec4(u_facelet_coords.xy+UV,0.0,0.0)*u_texture_transform).xy;
-            FragColor = texture(u_texture,px_pos/vec2(12*128,9*128));
-            //FragColor = vec4(0.0,0.0,0.0,1.0);
+            FragColor = texture(u_texture,px_pos/vec2(12*128,-9*128) * 2);
             if (mod((px_pos.x + px_pos.y)/100, 2.0) < 0.3) {
-                FragColor = vec4(1.0,0.0,0.0,1.0);
+                //FragColor = vec4(1.0,0.0,0.0,1.0);
             }
         }
     "#,
@@ -911,13 +921,7 @@ fn jumbotron_thread_main(
             1.0,0.5,0.0, // orange
             0.0,0.0,0.0, // black (for blank cells)
         ]);
-        let screen_transform = [
-            2.0/winw as f32,0.0,0.0,-1.0,
-            0.0,-2.0/winh as f32,0.0,1.0,
-            0.0,0.0,1.0,0.0,
-            0.0,0.0,0.0,1.0,
-        ];
-        //shader.u_screen_transform.set(false,&screen_transform);
+
         let cols: Vec<u32> = {
             let cube = cube_state.lock().unwrap();
             (0..54).map(|i|{
@@ -981,10 +985,15 @@ fn jumbotron_thread_main(
             gl::Viewport(0,0,winw as i32,winh as i32);
             gl::Clear(gl::DEPTH_BUFFER_BIT);
         }
-        //shader.u_screen_transform.set(false,&screen_transform);
         mapper.use_();
         const texture_unit: i32 = 0;
         mapper.u_texture.set(texture_unit);
+        let screen_transform = [
+            2.0/winw as f32,0.0,0.0,-1.0,
+            0.0,-2.0/winh as f32,0.0,1.0,
+            0.0,0.0,1.0,0.0,
+            0.0,0.0,0.0,1.0,
+        ];
         unsafe{
             gl::ActiveTexture(gl::TEXTURE0 + texture_unit as u32);
             gl::BindTexture(gl::TEXTURE_2D, cube_texture);
