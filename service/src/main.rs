@@ -60,6 +60,7 @@ struct CubeConfig{
     fullscreen: Option<bool>,
     show_preview: Option<bool>,
     sound_enabled: Option<bool>,
+    twist_duration: Option<f32>,
 }
 
 enum DeviceEvent{
@@ -788,6 +789,7 @@ fn jumbotron_thread_main(
     let fp = config.facelet_px.unwrap_or(48);
     let start_fullscreen = config.fullscreen.unwrap_or(false);
     let show_preview = config.show_preview.unwrap_or(false);
+    let twist_duration = config.twist_duration.unwrap_or(300.0);
     // always have a 5x9 arrangement of facelets
     let nw = 9;
     let nh = 5;
@@ -1012,7 +1014,7 @@ fn jumbotron_thread_main(
         let lt = last_twist.lock().unwrap();
         if let Some(t) = lt.time {
             let d = Instant::now() - t;
-            let d = ((d.as_millis() as f32)/1000.0).min(1.0);
+            let d = ((d.as_millis() as f32)/twist_duration).min(1.0);
             shader.u_anim_pos.set(d);
         }
         else{
