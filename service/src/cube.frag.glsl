@@ -325,16 +325,91 @@ uint jog_n(uint a, uint n){
     return a;
 }
 
+bool is_adjacent(uint f1, uint f2){
+    if (f1 == 0u) {return f2 != 5u;}
+    if (f1 == 1u) {return f2 != 3u;}
+    if (f1 == 2u) {return f2 != 4u;}
+    if (f1 == 3u) {return f2 != 1u;}
+    if (f1 == 4u) {return f2 != 2u;}
+    if (f1 == 5u) {return f2 != 0u;}
+}
+
+int should_slide_x(uint face, int x){
+    if (face == 0u && u_twist_face == 2u && x == 0) {return 1;}
+    if (face == 0u && u_twist_face == 4u && x == 2) {return -1;}
+    if (face == 1u && u_twist_face == 2u && x == 0) {return 1;}
+    if (face == 1u && u_twist_face == 4u && x == 2) {return -1;}
+    if (face == 2u && u_twist_face == 3u && x == 0) {return 1;}
+    if (face == 2u && u_twist_face == 1u && x == 2) {return -1;}
+    if (face == 3u && u_twist_face == 4u && x == 0) {return 1;}
+    if (face == 3u && u_twist_face == 2u && x == 2) {return -1;}
+    if (face == 4u && u_twist_face == 1u && x == 0) {return 1;}
+    if (face == 4u && u_twist_face == 3u && x == 2) {return -1;}
+
+    if (face == 0u && u_twist_face == 7u && x == 1) {return 1;}
+
+    if (face == 1u && u_twist_face == 7u && x == 1) {return 1;}
+    if (face == 2u && u_twist_face == 6u && x == 1) {return -1;}
+    if (face == 3u && u_twist_face == 7u && x == 1) {return -1;}
+    if (face == 4u && u_twist_face == 6u && x == 1) {return 1;}
+
+    return 0;
+}
+
+int should_slide_y(uint face, int y){
+    if (face == 0u && u_twist_face == 3u && y == 0) {return -1;}
+    if (face == 0u && u_twist_face == 1u && y == 2) {return 1;}
+    if (face == 1u && u_twist_face == 0u && y == 0) {return -1;}
+    if (face == 1u && u_twist_face == 5u && y == 2) {return 1;}
+    if (face == 2u && u_twist_face == 0u && y == 0) {return -1;}
+    if (face == 2u && u_twist_face == 5u && y == 2) {return 1;}
+    if (face == 3u && u_twist_face == 0u && y == 0) {return -1;}
+    if (face == 3u && u_twist_face == 5u && y == 2) {return 1;}
+    if (face == 4u && u_twist_face == 0u && y == 0) {return -1;}
+    if (face == 4u && u_twist_face == 5u && y == 2) {return 1;}
+
+    if (face == 0u && u_twist_face == 6u && y == 1) {return 1;}
+
+
+    if (face == 1u && u_twist_face == 8u && y == 1) {return 1;}
+    if (face == 2u && u_twist_face == 8u && y == 1) {return 1;}
+    if (face == 3u && u_twist_face == 8u && y == 1) {return 1;}
+    if (face == 4u && u_twist_face == 8u && y == 1) {return 1;}
+    return 0;
+}
+
+vec3 render_subface(vec2 fl, vec3 base_col){
+     return base_col * bulge(fl.x) * bulge(fl.y);
+}
+
 vec4 render_face(vec2 ffc, uint face){
     vec3 o = vec3(0,0,0);
     for (int x = 0; x < 3; x++){
+        int slide_x = should_slide_x(face, x);
         for (int y = 0; y < 3; y++){
+            int slide_y = should_slide_y(face, y);
+            vec2 ffc1 = ffc;
+            vec2 ffc2 = ffc;
+            if (slide_x != 0){
+                ffc1 = ffc + (vec2(0.0,-1.0+u_anim_pos) * -u_twist_dir * slide_x);
+                ffc2 = ffc + (vec2(0.0,u_anim_pos) * -u_twist_dir * slide_x);
+            }
+            if (slide_y != 0){
+                ffc1 = ffc + (vec2(-1.0+u_anim_pos,0.0) * -u_twist_dir * slide_y);
+                ffc2 = ffc + (vec2(u_anim_pos,0.0) * -u_twist_dir * slide_y);
+            }
             uint sf = uint(y*3+x);
             vec2 p = vec2(0-(x-1),0-(y-1));
-            vec2 facelet = (ffc * 3) + p;
             uint f_id = face * 9u + sf;
-            vec3 base = u_base_cols[u_cur_colours[f_id]];
-            o += base * bulge(facelet.x) * bulge(facelet.y);
+
+            vec2 facelet1 = (ffc1 * 3) + p;
+            vec3 base1 = u_base_cols[u_cur_colours[f_id]];
+            o += base1 * bulge(facelet1.x) * bulge(facelet1.y);
+            if (slide_x != 0 || slide_y != 0){
+                vec2 facelet2 = (ffc2 * 3) + p;
+                vec3 base2 = u_base_cols[u_prev_colours[f_id]];
+                o += render_subface(facelet2, base2);//base2 * bulge(facelet2.x) * bulge(facelet2.y);
+            }
         }
     }
     return vec4(o, 1.0);
@@ -383,9 +458,7 @@ void main() {
         }
     }
 
-    //bool should_render = f >= 0 && f != 5; // if not on a face, nothing to do. Bottom face is also skipped
-    bool should_render = f < 999u; // alternatively, when debugging, this might be useful
-    //should_render = should_render && (sf != 0u);
+    bool should_render = f < 999u;
     if (!should_render){
         FragColor = unseen_area(px_pos);
     }
@@ -397,7 +470,7 @@ void main() {
         if (f == 4u) {angle += PI/2;}
         if (f == 3u) {angle += PI;}
         if (this_face && u_anim_pos < 1.0){
-            angle += (PI/2) - (u_anim_pos * PI/2);
+            angle += (u_twist_dir*PI/2) - (u_anim_pos * u_twist_dir * PI/2);
         }
         mat2 rotation = rot_mat(angle);
         from_face_centre *= rotation;

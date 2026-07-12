@@ -368,16 +368,12 @@ impl Read for CubeDevice{
                 if sequence.len() <= 0 {
                     // Generate a new sequence
                     //for _ in 0..20{
-                    //    sequence.push(Twist::from_string("b").unwrap());
-                    //    sequence.push(Twist::from_string("b'").unwrap());
-                    //    //sequence.push(Twist::from_string("f").unwrap());
-                    //    //sequence.push(Twist::from_string("f'").unwrap());
-                    //    //sequence.push(Twist::from_string("l").unwrap());
-                    //    //sequence.push(Twist::from_string("l'").unwrap());
-                    //    //sequence.push(Twist::from_string("r").unwrap());
-                    //    //sequence.push(Twist::from_string("r'").unwrap());
-                    //    //sequence.push(Twist::from_string("u").unwrap());
-                    //    //sequence.push(Twist::from_string("u'").unwrap());
+                    //    sequence.push(Twist::from_string("e").unwrap());
+                    //    sequence.push(Twist::from_string("m").unwrap());
+                    //    sequence.push(Twist::from_string("s").unwrap());
+                    //    sequence.push(Twist::from_string("e").unwrap());
+                    //    sequence.push(Twist::from_string("m").unwrap());
+                    //    sequence.push(Twist::from_string("s").unwrap());
                     //}
                     for _ in 0..20{
                         sequence.push(Twist::get_random())
@@ -653,9 +649,9 @@ shader_struct!{
         uniform vec2 u_facelet_coords;
         out vec4 FragColor;
         void main() {
-            FragColor = texture(u_texture,px_pos/vec2(12*128,-9*128) * 2);
-            if (mod((px_pos.x + px_pos.y)/100, 2.0) < 0.3) {
-                //FragColor = vec4(1.0,0.0,0.0,1.0);
+            FragColor = vec4(0,0,0,1.0);
+            if (px_pos.x < (128*12)){
+                FragColor = texture(u_texture,px_pos/vec2(12*128,-9*128)*2);
             }
         }
     "#,
@@ -737,10 +733,12 @@ fn jumbotron_thread_main(
     // always have a 5x9 arrangement of facelets
     let nw = 9;
     let nh = 5;
+    let net_w = 12;
+    let net_h = 9;
     let width = fp * nw;
     let height = fp * nh;
-    let net_width = fp * 12;
-    let net_height = fp * 9;
+    let net_width = fp * net_w;
+    let net_height = fp * net_h;
     let mut winw = width;
     let mut winh = height;
     if show_preview{
@@ -869,22 +867,22 @@ fn jumbotron_thread_main(
     //top left back right front
     let face_transforms = [
         &Transform::translate(0.0,sp,0.0)*&Transform::rotate_ypr(0.0, 0.0, std::f32::consts::TAU/4.0), // Top
-        &Transform::translate(sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/-4.0,0.0), // Left
-        &Transform::translate(0.0,0.0,sp)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/2.0,0.0), // Back
         &Transform::translate(-sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/4.0,0.0), // Right
+        &Transform::translate(0.0,0.0,sp)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/2.0,0.0), // Back
+        &Transform::translate(sp,0.0,0.0)*&Transform::rotate_ypr(0.0,std::f32::consts::TAU/-4.0,0.0), // Left
         Transform::translate(0.0,0.0,-sp), // Front
     ];
 
     let facelet_translations: [Transform<f32>;9] = [
-        Transform::translate(-1.0,-1.0,0.0),
-        Transform::translate( 0.0,-1.0,0.0),
-        Transform::translate( 1.0,-1.0,0.0),
-        Transform::translate(-1.0, 0.0,0.0),
-        Transform::none(), // Centre
-        Transform::translate( 1.0, 0.0,0.0),
         Transform::translate(-1.0, 1.0,0.0),
         Transform::translate( 0.0, 1.0,0.0),
         Transform::translate( 1.0, 1.0,0.0),
+        Transform::translate(-1.0, 0.0,0.0),
+        Transform::none(), // Centre
+        Transform::translate( 1.0, 0.0,0.0),
+        Transform::translate(-1.0,-1.0,0.0),
+        Transform::translate( 0.0,-1.0,0.0),
+        Transform::translate( 1.0,-1.0,0.0),
     ];
     // -------------------------------------------------
     
@@ -1017,8 +1015,8 @@ fn jumbotron_thread_main(
             let tx = (fww-aw)/(1.0*fww);
             let ty = (fwh-ah)/(-1.0*fwh);
             let texture_transform = [
-                1.0/nw as f32,0.0,0.0,0.0,
-                0.0,-1.0/nh as f32,0.0,1.0,
+                1.0/net_w as f32,0.0,0.0,0.0,
+                0.0,-1.0/net_h as f32,0.0,1.0,
                 0.0,0.0,1.0,0.0,
                 0.0,0.0,0.0,1.0,
             ];
@@ -1034,9 +1032,9 @@ fn jumbotron_thread_main(
                 // I should maybe fix this???
                 0.8,0.8,0.8, // white
                 1.0,0.0,0.0, // red
-                0.0,0.0,1.0, // blue
-                1.0,0.5,0.0, // orange
                 0.0,1.0,0.0, // green
+                1.0,0.5,0.0, // orange
+                0.0,0.0,1.0, // blue
                 1.0,1.0,0.0, // yellow
                 0.0,0.0,0.0, // black (for blank cells)
             ]);
@@ -1046,19 +1044,38 @@ fn jumbotron_thread_main(
             let base_trans = &Transform::scale(height as f32/width as f32,1.0,1.0) * &Transform::scale(sf,sf,sf);
             let base_trans = &base_trans * &Transform::rotate_xyz(-0.25,0.0,0.0);
             let base_trans = &base_trans * &Transform::rotate_xyz(0.00,(Instant::now()-start_time).as_millis() as f32 / 10000.0,0.0);
+            let subface_fixup = Transform::rotate_xyz(0.0,0.0,-std::f32::consts::PI/2.0);
             //let base_trans = &base_trans * &Transform::rotate_xyz(0.00,1.0,0.0);
             for (i, t1) in face_transforms.iter().enumerate(){
                 preview_cube.u_cur_face.set(i.try_into().unwrap());
+                let face_fixup = match i {
+                    0 => Transform::rotate_xyz(0.0,0.0,-std::f32::consts::PI/2.0), //
+                    1 => Transform::none(), //
+                    2 => Transform::rotate_xyz(0.0,0.0,std::f32::consts::PI/2.0), //
+                    3 => Transform::rotate_xyz(0.0,0.0,std::f32::consts::PI), //
+                    4 => Transform::rotate_xyz(0.0,0.0,-std::f32::consts::PI/2.0),//
+                    _ => Transform::none(),//
+                };
                 for (j, t2) in facelet_translations.iter().enumerate(){
                     let t = Transform::none();
                     let t = &t * &base_trans;
                     let t = &t * &t1;
+                    let t = &t * &face_fixup;
                     let t = &t * &t2;
+                    let t = &t * &subface_fixup;
                     preview_cube.u_transform.set(false, &t.data);
-                    let fx = j as f32;
-                    let fy = i as f32;
+                    let (mut fx, mut fy) = match i{
+                        0 => { (3.0,3.0) },
+                        1 => { (3.0,6.0) },
+                        2 => { (0.0,3.0) },
+                        3 => { (3.0,0.0) },
+                        4 => { (6.0,3.0) },
+                        _ => { (0.0,0.0) },
+                    };
+                    fx += (j % 3) as f32;
+                    fy += (j / 3) as f32;
                     preview_cube.u_facelet_coords.set(fx,fy);
-                    unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
+                        unsafe { gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4); }
                 }
             }
         }
