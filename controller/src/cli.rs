@@ -235,6 +235,8 @@ fn main() {
                                 mprintln!(p, "\tdetect leds              - start the LED configuration sequence");
                                 mprintln!(p, "\t    map <FACE> <SUBFACE> - map currently lit LED during LED detection sequence to face FACE and subface SUBFACE");
                                 mprintln!(p, "\t    map undo             - undo a step in the LED detection sequence");
+                                mprintln!(p, "\tdetect skip              - skip the current detection step (will result in a broken calibration, but useful for testing partially built systems)");
+                                mprintln!(p, "\tdetect abort             - stop detecting LEDs or inputs, and return to normal operation");
                                 mprintln!(p, "\texit                     - quit the CLI");
                                 mprintln!(p, "\trot <FACE> <SUBFACE>     - rotate the specified subface by 90 degrees (use 'cal on' to see rotation guides)");
                                 mprintln!(p, "\tshow                     - show the state of the cube");
@@ -259,6 +261,12 @@ fn main() {
                             }
                             ,"detect inputs" => {
                                 sender.send(DetectInputs())?;
+                            }
+                            ,"detect skip" => {
+                                sender.send(DetectionSkip())?;
+                            }
+                            ,"detect abort" => {
+                                sender.send(DetectionAbort())?;
                             }
                             ,"start" => {
                                 sender.send(StartGame())?;

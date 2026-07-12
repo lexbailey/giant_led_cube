@@ -650,6 +650,7 @@ shader_struct!{
         uniform vec2 u_facelet_coords;
         uniform uint u_mapping[45];
         uniform uint u_rotation_map[45];
+        uniform uint u_debug_mode;
         out vec4 FragColor;
 
         vec2 get_xy_0(uint f){
@@ -671,21 +672,26 @@ shader_struct!{
         }
 
         void main() {
+            // kinda nasty that this is inverted, but I'll fix it later
             FragColor = vec4(0,0,0,1.0);
-            vec2 pos = px_pos / u_facelet_px;
-            uint face = uint(floor(pos.y));
-            uint subface = uint(floor(pos.x));
-            uint id = face * 9u + subface;
-            uint mapped_id = u_mapping[id];
-            uint mapped_face = mapped_id/9u;
-            uint mapped_subface = mapped_id%9u;
-            vec2 xy = get_xy(mapped_face, mapped_subface);
-            //vec2 mod_px = vec2(uint(px_pos.x) % uint(u_facelet_px), uint(px_pos.y) % uint(u_facelet_px));
-            vec2 mod_px = mod(px_pos, u_facelet_px);
-            uint rotation = u_rotation_map[mapped_id];
-            if (px_pos.x < (u_facelet_px*9) && px_pos.y < (u_facelet_px*5)){
-                FragColor = vec4(1.0,1.0,1.0,1.0) * float(mapped_id)/45.0;
-                FragColor = texture(u_texture, ((xy * u_facelet_px) + mod_px)/(u_facelet_px * vec2(12,9)));
+            if (u_debug_mode == 1u) {
+                FragColor = texture(u_texture, px_pos/(u_facelet_px * vec2(12,-9)));
+            }
+            else{
+                vec2 pos = px_pos / u_facelet_px;
+                uint face = uint(floor(pos.y));
+                uint subface = uint(floor(pos.x));
+                uint id = face * 9u + subface;
+                uint mapped_id = u_mapping[id];
+                uint mapped_face = mapped_id/9u;
+                uint mapped_subface = mapped_id%9u;
+                vec2 xy = get_xy(mapped_face, mapped_subface);
+                vec2 mod_px = mod(px_pos, u_facelet_px);
+                uint rotation = u_rotation_map[mapped_id];
+                if (px_pos.x < (u_facelet_px*9) && px_pos.y < (u_facelet_px*5)){
+                    FragColor = vec4(1.0,1.0,1.0,1.0) * float(mapped_id)/45.0;
+                    FragColor = texture(u_texture, ((xy * u_facelet_px) + mod_px)/(u_facelet_px * vec2(12,-9)));
+                }
             }
         }
     "#,
@@ -699,6 +705,7 @@ shader_struct!{
         u_facelet_coords: Uniform2F,
         u_mapping: Uniform1UIV,
         u_rotation_map: Uniform1UIV,
+        u_debug_mode: Uniform1UI,
     }
 }
 
@@ -803,6 +810,7 @@ fn jumbotron_thread_main(
     //glfw.set_swap_interval(glfw::SwapInterval::None);
     glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
     window.set_framebuffer_size_polling(true);
+    window.set_key_polling(true);
 
     let (iwinw, iwinh) = window.get_framebuffer_size();
     (winw, winh) = (iwinw as u32, iwinh as u32);
@@ -927,6 +935,8 @@ fn jumbotron_thread_main(
 
     let start_time = Instant::now();
 
+    let mut texture_debug_mode = 0;
+
     while !window.should_close() {
         let debug = *calibration_mode.lock().unwrap();
         unsafe {
@@ -939,6 +949,7 @@ fn jumbotron_thread_main(
             use glfw::WindowEvent::*;
             match event {
                 FramebufferSize(w,h) => {winw = w as u32; winh = h as u32;},
+                Key(glfw::Key::F6, _, glfw::Action::Press, _) => {texture_debug_mode = 1-texture_debug_mode},
                 e => {println!("{:?}",e);}
             }
         }
@@ -1030,6 +1041,7 @@ fn jumbotron_thread_main(
         }
         const texture_unit: i32 = 0;
         mapper.u_texture.set(texture_unit);
+        mapper.u_debug_mode.set(texture_debug_mode);
         let screen_transform = [
             2.0/winw as f32,0.0,0.0,-1.0,
             0.0,-2.0/winh as f32,0.0,1.0,
@@ -1154,6 +1166,7 @@ impl LedMap{
     }
 
     fn set(&mut self, map: &str){
+        println!("Mapping: {}", map);
         let m = map.as_bytes();
         for i in 0..=44{
             let fnum = (m[i*2] - b'0') as u32;

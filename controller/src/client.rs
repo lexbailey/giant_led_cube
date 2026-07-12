@@ -49,6 +49,16 @@ impl InputDetectState{
         self.active = true;
     }
 
+    fn deactivate(&mut self){
+        self.active = false;
+    }
+
+    fn skip_one(&mut self) {
+        if self.twist < 18{
+            self.twist += 1;
+        }
+    }
+
     fn detected_input_num(&mut self) -> Option<u32>{
         for s in self.samples{
             let mut n = 0;
@@ -193,6 +203,15 @@ impl LEDDetectState {
     fn deactivate(&mut self){
         self.active = false;
     }
+
+    fn skip_one(&mut self){
+        if self.led_num < self.led_map.len(){
+            self.led_num += 1;
+        }
+        else{
+            self.active = false;
+        }
+    }
 }
 
 pub struct ClientState {
@@ -244,18 +263,20 @@ type TcpMessenger = Messenger<TcpStream, TcpConnector>;
 
 #[derive(Debug)]
 pub enum FromGUI {
-    Connect(Vec<u8>, String) // secret, address
-    ,DetectLEDs()
-    ,DetectInputs()
-    ,StartGame()
-    ,SetState(Cube)
-    ,GetState()
-    ,SyncState()
-    ,MapLED(usize, usize)
-    ,BacktrackLEDDetect()
-    ,ShutDown()
-    ,SetBrightness(String)
-    ,CancelTimer(),
+    Connect(Vec<u8>, String), // secret, address
+    DetectLEDs(),
+    DetectInputs(),
+    DetectionAbort(),
+    DetectionSkip(),
+    StartGame(),
+    SetState(Cube),
+    GetState(),
+    SyncState(),
+    MapLED(usize, usize),
+    BacktrackLEDDetect(),
+    ShutDown(),
+    SetBrightness(String),
+    CancelTimer(),
     EnableCalibrationView(),
     DisableCalibrationView(),
     RotateSubface(usize,usize),
@@ -628,8 +649,39 @@ pub fn start_client() -> (Arc<Mutex<ClientState>>, Sender<FromGUI>, Receiver<ToG
                                 }
                                 command_queue.push_back(("set_state".to_string(), vec![test_state]));
                                 to_gui_sender.send(ToGUI::StateUpdate())?;
+                            },
+                            DetectionAbort() => {
+                                let mut state = state.lock().unwrap();
+                                state.input_detect_state.deactivate();
+                                state.led_detect_state.deactivate();
+                                command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
+                                to_gui_sender.send(ToGUI::StateUpdate())?;
+                            },
+                            DetectionSkip() => {
+                                let mut state = state.lock().unwrap();
+                                if state.input_detect_state.active {
+                                    state.input_detect_state.skip_one();
+                                    let test_state = state.input_detect_state.get_led_state();
+                                    command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                                }
+                                else{
+                                    if state.led_detect_state.active{
+                                        state.led_detect_state.skip_one();
+                                        if state.led_detect_state.is_done() {
+                                            state.led_detect_state.deactivate();
+                                            command_queue.push_back(("led_mapping".to_string(), vec![state.led_detect_state.get_mapping()]));
+                                            command_queue.push_back(("set_state".to_string(), vec![state.cube.serialise()]));
+                                            command_queue.push_back(("play".to_string(), vec![]));
+                                        }
+                                        else{
+                                            let test_state = state.led_detect_state.get_state();
+                                            command_queue.push_back(("set_state".to_string(), vec![test_state]));
+                                        }
+                                    }
+                                }
+                                to_gui_sender.send(ToGUI::StateUpdate())?;
                             }
-                            ,StartGame() => {
+                            StartGame() => {
                                 let mut state = state.lock().unwrap();
                                 state.cube = cube_model::Cube::new();
                                 let mut last_twist = Twist::from_string("F").unwrap();
