@@ -1193,7 +1193,9 @@ impl LedMap{
     }
 
     fn rotate(&mut self, f: usize, sf: usize){
-        let i = self.indexmap[(f*9)+sf] as usize;
+        // rotations are specified in mapped coordinates, so reverse the map to
+        // find the actual id number to rotate
+        let i = self.inverse()[(f*9)+sf] as usize;
         self.rotationmap[i] = (self.rotationmap[i]+3)%4;
     }
 
