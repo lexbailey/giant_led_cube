@@ -653,6 +653,17 @@ shader_struct!{
         uniform uint u_debug_mode;
         out vec4 FragColor;
 
+        const float PI = 3.141592;
+
+        mat2 rotate2(float t){
+             float ct = cos(t);
+             float st = sin(t);
+             return mat2(
+                 ct, -st,
+                 st, ct
+             );
+        }
+
         vec2 get_xy_0(uint f){
             if (f == 0u) {return vec2(3,3);}
             if (f == 1u) {return vec2(3,6);}
@@ -687,7 +698,10 @@ shader_struct!{
                 uint mapped_subface = mapped_id%9u;
                 vec2 xy = get_xy(mapped_face, mapped_subface);
                 vec2 mod_px = mod(px_pos, u_facelet_px);
-                uint rotation = u_rotation_map[mapped_id];
+                float rotation = u_rotation_map[mapped_id] * PI/2.0;
+                mat2 r = rotate2(rotation);
+                vec2 halftile = vec2(0.5,0.5) * u_facelet_px;
+                mod_px = (mod_px - halftile) * r + halftile;
                 if (px_pos.x < (u_facelet_px*9) && px_pos.y < (u_facelet_px*5)){
                     FragColor = vec4(1.0,1.0,1.0,1.0) * float(mapped_id)/45.0;
                     FragColor = texture(u_texture, ((xy * u_facelet_px) + mod_px)/(u_facelet_px * vec2(12,-9)));
