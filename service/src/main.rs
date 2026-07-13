@@ -22,8 +22,7 @@ use std::io::Cursor;
 
 #[cfg(feature="output_mode_jumbotron")]
 use {
-    std::{mem,ptr},
-    std::ffi::c_void,
+    std::ptr,
     std::sync::{Arc,Mutex},
     gl::types::*,
     glfw::Context,
@@ -746,13 +745,6 @@ shader_struct!{
         u_facelet_px: Uniform1F,
         u_prev_colours: Uniform1UIV,
         u_cur_colours: Uniform1UIV,
-        u_mapping: Uniform1UIV,
-        u_rotation_map: Uniform1UIV,
-        u_map_facenum: Uniform1UIV,
-        u_map_subfacenum: Uniform1UIV,
-        u_inverse_facemap: Uniform1UIV,
-        u_adjacent: Uniform1UIV,
-        u_data_table: UniformSamplerBuffer,
         u_base_cols: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
@@ -760,8 +752,6 @@ shader_struct!{
         u_anim_style: Uniform1UI,
     }
 }
-
-const data_table: &[u8;6*9*9*4] = include_bytes!("data_table.bin");
 
 #[cfg(feature="output_mode_jumbotron")]
 fn jumbotron_thread_main(
@@ -858,27 +848,6 @@ fn jumbotron_thread_main(
     let vbo = BufferObject::new(vert_array.to_vec(), gl::ARRAY_BUFFER, gl::STATIC_DRAW);
     verts.add_buffer(&vbo, 0, 2, gl::FALSE, ptr::null());
 
-    let mut data_texture = 0;
-    let mut data_buffer = 0;
-    // position attribute
-
-    unsafe{
-        // put the data table in place
-        gl::GenTextures(1, &mut data_texture);
-        gl::GenBuffers(1, &mut data_buffer);
-        gl::BindBuffer(gl::TEXTURE_BUFFER, data_buffer);
-        gl::BufferData(
-            gl::TEXTURE_BUFFER,
-            (data_table.len() * mem::size_of::<GLbyte>()) as GLsizeiptr,
-            &data_table[0] as *const u8 as *const c_void,
-            gl::STATIC_DRAW,
-        );
-        gl::BindTexture(gl::TEXTURE_BUFFER, data_texture);
-        gl::TexBuffer(gl::TEXTURE_BUFFER, gl::RGBA8UI, data_buffer);
-    }
-    shader.u_data_table.set(data_texture as i32);
-
-    // -------------------------------------------------
     let facelet_vert_array: [f32;12] = [
         -0.5, -0.5, 0.0,
         0.5, -0.5, 0.0,
@@ -1000,15 +969,7 @@ fn jumbotron_thread_main(
                 colour_num(cube.faces[f].subfaces[s].color)
             }).collect()
         };
-        {
-            let lm = led_map.lock().unwrap();
-            shader.u_mapping.set(&lm.indexmap);
-            shader.u_map_facenum.set(&lm.facemap);
-            shader.u_map_subfacenum.set(&lm.subfacemap);
-            shader.u_inverse_facemap.set(&lm.inverse());
-            shader.u_rotation_map.set(&lm.rotationmap);
-            shader.u_adjacent.set(&[12, 136, 24, 68, 192, 80, 6, 130, 18, 5, 129, 17, 260, 384, 272, 36, 160, 48, 9, 65, 3, 264, 320, 258, 40, 96, 34, 17, 129, 5, 272, 384, 260, 48, 160, 36, 3, 65, 9, 258, 320, 264, 34, 96, 40, 24, 136, 12, 80, 192, 68, 18, 130, 6]);
-        }
+
         shader.u_prev_colours.set(prev_cols.as_slice());
         shader.u_cur_colours.set(cols.as_slice());
         let lt = last_twist.lock().unwrap();

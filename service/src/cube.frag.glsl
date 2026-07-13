@@ -5,15 +5,6 @@ uniform float u_global_time;
 uniform float u_anim_pos;
 uniform uint u_prev_colours[54];
 uniform uint u_cur_colours[54];
-
-uniform uint u_mapping[45];
-uniform uint u_rotation_map[45];
-uniform uint u_map_facenum[45];
-uniform uint u_map_subfacenum[45];
-uniform uint u_inverse_facemap[45];
-
-uniform uint u_adjacent[45];
-uniform usamplerBuffer u_data_table;
 uniform vec3 u_base_cols[7];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
@@ -29,13 +20,6 @@ float bulge(float a){
     if (a > 0.5){return 0.0;}
     a = a*2.0;
     return 1.0-a*a*a*a;
-}
-
-float bulge2(float a){
-    if (a < -0.5){return 0.0;}
-    if (a > 0.5){return 0.0;}
-    a = a*2.0;
-    return 1.0-a*a;
 }
 
 mat3 translate(float x, float y){
@@ -93,15 +77,8 @@ mat4 rotate4(float x, float y, float z){
     );
 }
 
-uint get_index(uint f, uint sf){
-    uint i = (f*9u)+sf;
-    return i;
-    //return u_inverse_facemap[i];
-}
-
 vec4 arrowhead(vec2 fl_coord, vec3 base, uint rot){
-    vec3 cfl = vec3(fl_coord,1.0);
-    cfl *= rotate3((rot+1u)*PI/2);
+    vec2 cfl = fl_coord * rotate2((rot+1u)*PI/2);
     float x = cfl.x;
     float y = cfl.y;
     float ax = abs(cfl.x);
@@ -167,14 +144,6 @@ vec3 bands(float f, vec2 spot_centre, vec2 uv, float spot_radius, vec2 scale){
       (cols[c2] * c2m)).rgb, spot_centre, uv, spot_radius*1.2, scale);
 }
 
-mat2 rot2(float t){
-     float ct = cos(t);
-     float st = sin(t);
-     return mat2(
-         ct, -st,
-         st, ct
-     );
-}
 
 vec2 rot(vec2 a, float t){
      float ct = cos(t);
@@ -260,52 +229,6 @@ vec4 jupiter(vec2 uv){
 
 //==========================================================
 
-
-vec4 render_tile(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot, bool is_centre, bool is_edge, bool is_corner){
-    vec3 c = vec3(0.0,0.0,0.0);
-    bool mask = (fl_coord.x > -0.5 && fl_coord.x < 0.5) && (fl_coord.y > -0.5 && fl_coord.y < 0.5);
-    //if (face_id == 5u){
-    //    if (mask){
-    //        vec2 uv = fl_coord;
-    //        mat3 r = rotate(PI/2);
-    //        uv.y = 0.0-uv.y;
-    //        uv = (vec3(uv,1.0) * r).xy;
-    //        uv += vec2(0.5,0.5);
-    //        c = jupiter(uv).rgb * bulge(fl_coord.x) * bulge(fl_coord.y);;
-    //    }
-    //}
-    //else{
-        c = base * bulge(fl_coord.x) * bulge(fl_coord.y);
-    //}
-
-    if (u_debug_arrow > 0u && !is_centre){
-        vec3 cfl = vec3(fl_coord,1.0);
-        cfl *= rotate3((rot+1u)*PI/2);
-        if (is_corner){
-            cfl *= rotate3(-PI/4);
-        }
-        float x = cfl.x;
-        float y = cfl.y;
-        float ax = abs(cfl.x);
-        float ay = abs(cfl.y);
-        if (
-            (ax < 0.1 && ay < 0.35)
-            || (y > 0.25 && y < 0.45 && ax < 0.45-y)
-        ){
-            c += vec3(1.0,-1.0,1.0);
-        }
-    }
-    return vec4(c,1.0);
-}
-
-vec4 render_tile_centre(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, true, false, false); }
-vec4 render_tile_edge(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, false, true, false); }
-vec4 render_tile_corner(uint face_id, uint sf_id, uint m_face, vec2 fl_coord, vec3 base, uint rot){ return render_tile(face_id, sf_id, m_face, fl_coord, base, rot, false, false, true); }
-
-bool adjacent(uint f1, uint sf1 ,uint f2){
-    return (u_adjacent[(f1*9u)+sf1] & (1u<<f2)) > 0u;
-}
-
 vec4 unseen_area(vec2 px_pos){
     vec4 col = vec4(0,0,0,1);
     vec2 grid = px_pos / 20;
@@ -313,25 +236,6 @@ vec4 unseen_area(vec2 px_pos){
         col = vec4(1.0,0.0,1.0, 1.0);
     }
     return col;
-}
-
-uint jog(uint a){
-    if (a == 0u) {return 1u;}
-    if (a == 1u) {return 2u;}
-    if (a == 2u) {return 5u;}
-    if (a == 3u) {return 0u;}
-    if (a == 4u) {return 4u;}
-    if (a == 5u) {return 8u;}
-    if (a == 6u) {return 3u;}
-    if (a == 7u) {return 6u;}
-    if (a == 8u) {return 7u;}
-}
-
-uint jog_n(uint a, uint n){
-    for (uint i = 0u; i< n; i++){
-        a = jog(a);
-    }
-    return a;
 }
 
 bool is_adjacent(uint f1, uint f2){
@@ -470,26 +374,6 @@ vec4 render_face(vec2 ffc, uint face){
 }
 
 void main() {
-    uint sf_cw[9];
-    uint sf_ccw[9];
-    sf_cw[0] = 1u;
-    sf_cw[1] = 2u;
-    sf_cw[2] = 5u;
-    sf_cw[3] = 0u;
-    sf_cw[4] = 4u;
-    sf_cw[5] = 8u;
-    sf_cw[6] = 3u;
-    sf_cw[7] = 6u;
-    sf_cw[8] = 7u;
-    sf_ccw[0] = 3u;
-    sf_ccw[1] = 0u;
-    sf_ccw[2] = 1u;
-    sf_ccw[3] = 6u;
-    sf_ccw[4] = 4u;
-    sf_ccw[5] = 2u;
-    sf_ccw[6] = 7u;
-    sf_ccw[7] = 8u;
-    sf_ccw[8] = 5u;
     float fp = u_facelet_px;
     float face_pixels = u_facelet_px * 3;;
     // get tile coordinates for this tile

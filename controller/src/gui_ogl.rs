@@ -13,7 +13,7 @@ use std::time::{Instant,Duration};
 use std::cell::RefCell;
 
 use gl_abstractions as gla;
-use gla::{UniformMat4F, Uniform3F, Uniform4F, UniformSampler2D, shader_struct, impl_shader};
+use gla::{UniformMat4F, Uniform3F, Uniform4F, UniformSampler2D, shader_struct, impl_shader, ShaderPipeline};
 
 #[cfg(feature="gles")]
 use gla::UniformVec2;
