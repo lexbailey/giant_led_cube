@@ -238,6 +238,7 @@ fn main() {
                                 mprintln!(p, "\tdetect skip              - skip the current detection step (will result in a broken calibration, but useful for testing partially built systems)");
                                 mprintln!(p, "\tdetect abort             - stop detecting LEDs or inputs, and return to normal operation");
                                 mprintln!(p, "\texit                     - quit the CLI");
+                                mprintln!(p, "\tnext style               - move to the next visual style");
                                 mprintln!(p, "\trot <FACE> <SUBFACE>     - rotate the specified subface by 90 degrees (use 'cal on' to see rotation guides)");
                                 mprintln!(p, "\tshow                     - show the state of the cube");
                                 mprintln!(p, "\tsolved                   - move to the solved state");
@@ -400,7 +401,10 @@ fn main() {
                                                 mprintln!(p, "rotated subface ({}, {})", f, s);
                                             }
                                         }
-                                    }
+                                    },
+                                    "next style" => {
+                                        sender.send(ChangeStyle())?;
+                                    },
                                     _ => {mprintln!(p, "Unknown command: {}",cmd);},
                                 }
                             }

@@ -94,6 +94,7 @@ enum ClientEvent{
     DisableCalibrationView(),
     RotateSubface(usize,usize),
     DoTwist(cube_model::Twist),
+    ChangeStyle(),
 }
 
 enum Event{
@@ -117,7 +118,7 @@ enum EvStreamError {
     StreamSender(#[from] std::sync::mpsc::SendError<StreamEvent>)
 }
 
-
+const NUM_STYLES: u32 = 3;
 
 fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>, secret: Vec<u8>){
     let mut auth = MessageHandler::new(secret);
@@ -247,7 +248,10 @@ fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sy
                                                     let msg = auth.construct_reply("bad_argument", &vec![&command]);
                                                     write_stream.write(msg.as_bytes())?;
                                                 }
-                                            }
+                                            },
+                                            "change_style" => {
+                                                sender.send(Event::Client(ClientEvent::ChangeStyle()))?;
+                                            },
                                             _=>{
                                                 let msg = auth.construct_reply("unknown_command", &vec![&command]);
                                                 write_stream.write(msg.as_bytes())?;
@@ -749,7 +753,7 @@ shader_struct!{
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
         u_debug_arrow: Uniform1UI,
-        u_anim_style: Uniform1UI,
+        u_style: Uniform1UI,
     }
 }
 
@@ -761,6 +765,7 @@ fn jumbotron_thread_main(
         last_twist: Arc<Mutex<TwistInfo>>,
         led_map: Arc<Mutex<LedMap>>,
         calibration_mode: Arc<Mutex<bool>>,
+        cube_style: Arc<Mutex<u32>>,
     ) {
 
     fn colour_num(c: cube_model::Colors) -> u32{
@@ -988,7 +993,11 @@ fn jumbotron_thread_main(
         }
         
         shader.u_debug_arrow.set(if debug {1} else {0});
-        shader.u_anim_style.set(0);
+
+        {
+            let style = *cube_style.lock().unwrap();
+            shader.u_style.set(style);
+        }
         let timefloat = start_time.elapsed().as_millis() as f32 / 1000.0;
         shader.u_global_time.set(timefloat);
 
@@ -1307,6 +1316,7 @@ fn main() {
 
     let led_map = Arc::new(Mutex::new(LedMap::new()));
     let calibration_mode = Arc::new(Mutex::new(false));
+    let cube_style = Arc::new(Mutex::new(0u32));
     
     {
         let mut map = led_map.lock().unwrap();
@@ -1322,7 +1332,8 @@ fn main() {
         let config = config.clone();
         let last_twist = last_twist.clone();
         let calibration_mode = calibration_mode.clone();
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist, led_map, calibration_mode); }))
+        let cube_style = cube_style.clone();
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist, led_map, calibration_mode, cube_style); }))
     } else { None };
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
@@ -1363,6 +1374,10 @@ fn main() {
                         }
                         ,ClientEvent::DisableCalibrationView() => {
                             *calibration_mode.lock().unwrap() = false;
+                        }
+                        ,ClientEvent::ChangeStyle() => {
+                            let mut s = cube_style.lock().unwrap();
+                            *s = (*s + 1) % NUM_STYLES;
                         }
                         ,ClientEvent::RotateSubface(f,sf) => {
                             let mut lm = led_map.lock().unwrap();

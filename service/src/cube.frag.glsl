@@ -9,7 +9,7 @@ uniform vec3 u_base_cols[7];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
 uniform uint u_debug_arrow;
-uniform uint u_anim_style;
+uniform uint u_style;
 out vec4 FragColor;
 layout(location=0) out vec3 tFragColor;
 
