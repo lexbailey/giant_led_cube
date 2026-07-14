@@ -118,7 +118,7 @@ enum EvStreamError {
     StreamSender(#[from] std::sync::mpsc::SendError<StreamEvent>)
 }
 
-const NUM_STYLES: u32 = 3;
+const NUM_STYLES: u32 = 2;
 
 fn handle_stream<R: 'static + Read + Send + Sync, W: 'static + Write + Send + Sync>(read_stream: R, mut write_stream: W, sender: Sender<Event>, secret: Vec<u8>){
     let mut auth = MessageHandler::new(secret);
@@ -750,6 +750,7 @@ shader_struct!{
         u_prev_colours: Uniform1UIV,
         u_cur_colours: Uniform1UIV,
         u_base_cols: Uniform3FV,
+        u_base_col_hicontrast: Uniform3FV,
         u_twist_face: Uniform1UI,
         u_twist_dir: Uniform1F,
         u_debug_arrow: Uniform1UI,
@@ -956,6 +957,16 @@ fn jumbotron_thread_main(
             1.0,1.0,0.0, // yellow
             1.0,0.5,0.0, // orange
             0.0,0.0,0.0, // black (for blank cells)
+        ]);
+
+        shader.u_base_col_hicontrast.set(&[
+            1.000000,1.000000,1.000000,
+            0.862745,0.149020,0.498039,
+            0.392157,0.560784,1.000000,
+            0.470588,0.368627,0.941176,
+            1.000000,0.690196,0.000000,
+            0.996078,0.380392,0.000000,
+            0.0,0.0,0.0, // black (for blank cells)   
         ]);
 
         let cols: Vec<u32> = {

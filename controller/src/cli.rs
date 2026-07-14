@@ -275,8 +275,11 @@ fn main() {
                             ,"exit" => {
                                 sender.send(ShutDown())?;
                                 return Ok(true);
-                            }
-                            ,"" => {}
+                            },
+                            "next style" => {
+                                sender.send(ChangeStyle())?;
+                            },
+                            "" => {}
                             ,cmd => {
                                 let mut parts = cmd.split(' ');
                                 let name = parts.next().unwrap();
@@ -401,9 +404,6 @@ fn main() {
                                                 mprintln!(p, "rotated subface ({}, {})", f, s);
                                             }
                                         }
-                                    },
-                                    "next style" => {
-                                        sender.send(ChangeStyle())?;
                                     },
                                     _ => {mprintln!(p, "Unknown command: {}",cmd);},
                                 }

@@ -6,6 +6,7 @@ uniform float u_anim_pos;
 uniform uint u_prev_colours[54];
 uniform uint u_cur_colours[54];
 uniform vec3 u_base_cols[7];
+uniform vec3 u_base_col_hicontrast[7];
 uniform uint u_twist_face;
 uniform float u_twist_dir;
 uniform uint u_debug_arrow;
@@ -221,7 +222,6 @@ vec4 jupiter(vec2 uv){
     if (d < 0.25){
          col = bands(p, spot_centre, uv, spot_radius,scale);
     }
-     
     col = fuzzy(col,uv_noswirl);
     fragColor = vec4(col,1.0);
     return fragColor;
@@ -291,53 +291,146 @@ int should_slide_y(uint face, int y){
     return 0;
 }
 
-vec3 render_subface(vec2 fl, vec3 base_col, uint f, uint sf){
-     vec3 c = base_col * bulge(fl.x) * bulge(fl.y);
-     bool mask = (fl.x > -0.5 && fl.x < 0.5) && (fl.y > -0.5 && fl.y < 0.5);
-     bool is_centre = sf == 4u;
-     bool is_edge = sf == 1u || sf == 3u || sf == 5u || sf == 7u;
-     bool is_corner = sf == 0u || sf == 2u || sf == 6u || sf == 8u;
-     uint rot = 0u;
-     if (sf == 1u) {rot += 3u;}
-     if (sf == 2u) {rot += 3u;}
-     if (sf == 3u) {rot += 0u;}
+vec3 circle(vec3 c, vec2 fl){
+    float sqdist = fl.x*fl.x + fl.y*fl.y;
+    if (sqdist > 0.05 && sqdist < 0.1){
+        return vec3(0.0,0.0,0.0);
+    }
+    return c;
+}
 
-     if (sf == 5u) {rot += 2u;}
-     if (sf == 6u) {rot += 1u;}
-     if (sf == 7u) {rot += 1u;}
-     if (sf == 8u) {rot += 2u;}
-     if (u_debug_arrow > 0u && !is_centre){
-         vec3 cfl = vec3(fl,1.0);
-         cfl *= rotate3((rot+1u)*PI/2);
-         if (is_corner){
-             cfl *= rotate3(-PI/4);
-         }
-         float x = cfl.x;
-         float y = cfl.y;
-         float ax = abs(cfl.x);
-         float ay = abs(cfl.y);
-         if (
-             (ax < 0.1 && ay < 0.35)
-             || (y > 0.25 && y < 0.45 && ax < 0.45-y)
-         ){
-             c += vec3(1.0,-1.0,1.0);
-         }
-     }
-     if (is_centre && (u_debug_arrow > 0u)){
-         vec2 ca = fl;
-         vec3 edge_base1 = u_base_cols[u_cur_colours[f*9u + 5u]];
-         vec3 edge_base2 = u_base_cols[u_cur_colours[f*9u + 1u]];
-         vec3 edge_base3 = u_base_cols[u_cur_colours[f*9u + 3u]];
-         vec3 edge_base4 = u_base_cols[u_cur_colours[f*9u + 7u]];
-         vec4 ah1 = arrowhead(ca, edge_base1, 0u);
-         vec4 ah2 = arrowhead(ca, edge_base2, 1u);
-         vec4 ah3 = arrowhead(ca, edge_base3, 2u);
-         vec4 ah4 = arrowhead(ca, edge_base4, 3u);
-         float mask = ah1.a * ah2.a * ah3.a * ah4.a;
-         vec3 arrows = vec3(ah1.rgb+ah2.rgb+ah3.rgb+ah4.rgb);
-         c = (c * mask) + arrows;
-     }
-     return c;
+vec3 cross_(vec3 c, vec2 fl){
+    float dist1 = abs(fl.x-fl.y);
+    float dist2 = abs(fl.x+fl.y);
+    if (abs(fl.x) < 0.2 && abs(fl.y) < 0.2 && (dist1 < 0.07 || dist2 < 0.07)){
+        return vec3(0.0,0.0,0.0);
+    }
+    return c;
+}
+
+vec3 square(vec3 c, vec2 fl){
+    float ax = abs(fl.x);
+    float ay = abs(fl.y);
+    float t = 0.25;
+    float w = 0.08;
+    if (ax < t && ay < t && ((ax > t-w) || ay > t-w)){
+        return vec3(0.0,0.0,0.0);
+    }
+    return c;
+}
+
+vec3 dot_(vec3 c, vec2 fl){
+    float sqdist = fl.x*fl.x + fl.y*fl.y;
+    if (sqdist < 0.005){
+        return vec3(0.0,0.0,0.0);
+    }
+    return c;
+}
+
+vec3 dots(vec3 c, vec2 fl){
+    float d = 0.15;
+    return 
+        dot_(dot_(dot_(dot_(c,
+            fl + vec2(d,d)),
+            fl + vec2(-d,d)),
+            fl + vec2(d,-d)),
+            fl + vec2(-d,-d))
+        ;
+}
+
+vec3 flower(vec3 c, vec2 fl){
+    return circle(circle(c,
+        fl * vec2(1.0,2.0)),
+        fl * vec2(2.0,1.0))
+    ;
+}
+
+
+vec3 render_subface(vec2 fl, uint col_id, uint f, uint sf){
+    vec3 c = vec3(0);
+    bool mask = (fl.x > -0.5 && fl.x < 0.5) && (fl.y > -0.5 && fl.y < 0.5);
+    bool is_centre = sf == 4u;
+    bool is_edge = sf == 1u || sf == 3u || sf == 5u || sf == 7u;
+    bool is_corner = sf == 0u || sf == 2u || sf == 6u || sf == 8u;
+    uint rot = 0u;
+    if (sf == 1u) {rot += 3u;}
+    if (sf == 2u) {rot += 3u;}
+    if (sf == 3u) {rot += 0u;}
+
+    if (sf == 5u) {rot += 2u;}
+    if (sf == 6u) {rot += 1u;}
+    if (sf == 7u) {rot += 1u;}
+    if (sf == 8u) {rot += 2u;}
+
+    float factor = bulge(fl.x) * bulge(fl.y);
+
+    if (u_style == 0u){
+        // default cube style, like most Rubik's cubes and clones
+        vec3 base_col = u_base_cols[col_id];
+        c = base_col * factor;
+    }
+
+    if (u_style == 1u){
+        // Designed for colour-vision-deficiency
+        vec3 base_col = u_base_col_hicontrast[col_id];
+        c = base_col * factor;
+
+        if (col_id == 0u){ c = circle(c, fl); }
+        if (col_id == 1u){ c = cross_(c, fl); }
+        if (col_id == 2u){ c = square(c, fl); }
+        if (col_id == 3u){ c = dots(c, fl); }
+        if (col_id == 4u){ c = flower(c, fl); }
+        // no symbol on the last colour
+    }
+
+    if (u_style == 2u){
+        // Space theme
+        vec3 base_col = u_base_cols[col_id];
+        if (col_id == 5u) {
+            if (mask){
+                c = jupiter(fl+vec2(0.5,0.5)).rgb * factor;
+            }
+        }
+        else{
+            c = base_col * factor;
+        }
+    }
+
+    // If debug arrows are enabled, those go on top of everything else, draw them last.
+    if (u_debug_arrow > 0u){
+        if (is_centre){
+            vec2 ca = fl;
+            vec3 edge_base1 = u_base_cols[u_cur_colours[f*9u + 5u]];
+            vec3 edge_base2 = u_base_cols[u_cur_colours[f*9u + 1u]];
+            vec3 edge_base3 = u_base_cols[u_cur_colours[f*9u + 3u]];
+            vec3 edge_base4 = u_base_cols[u_cur_colours[f*9u + 7u]];
+            vec4 ah1 = arrowhead(ca, edge_base1, 0u);
+            vec4 ah2 = arrowhead(ca, edge_base2, 1u);
+            vec4 ah3 = arrowhead(ca, edge_base3, 2u);
+            vec4 ah4 = arrowhead(ca, edge_base4, 3u);
+            float mask = ah1.a * ah2.a * ah3.a * ah4.a;
+            vec3 arrows = vec3(ah1.rgb+ah2.rgb+ah3.rgb+ah4.rgb);
+            c = (c * mask) + arrows;
+        }
+        else{
+            vec3 cfl = vec3(fl,1.0);
+            cfl *= rotate3((rot+1u)*PI/2);
+            if (is_corner){
+                cfl *= rotate3(-PI/4);
+            }
+            float x = cfl.x;
+            float y = cfl.y;
+            float ax = abs(cfl.x);
+            float ay = abs(cfl.y);
+            if (
+                (ax < 0.1 && ay < 0.35)
+                || (y > 0.25 && y < 0.45 && ax < 0.45-y)
+            ){
+                c += vec3(1.0,-1.0,1.0);
+            }
+        }
+    }
+    return c;
 }
 
 vec4 render_face(vec2 ffc, uint face){
@@ -361,11 +454,11 @@ vec4 render_face(vec2 ffc, uint face){
             uint f_id = face * 9u + sf;
 
             vec2 facelet1 = (ffc1 * 3) + p;
-            vec3 base1 = u_base_cols[u_cur_colours[f_id]];
+            uint base1 = u_cur_colours[f_id];
             o += render_subface(facelet1, base1, face, sf);
             if (slide_x != 0 || slide_y != 0){
                 vec2 facelet2 = (ffc2 * 3) + p;
-                vec3 base2 = u_base_cols[u_prev_colours[f_id]];
+                uint base2 = u_prev_colours[f_id];
                 o += render_subface(facelet2, base2, face, sf);
             }
         }

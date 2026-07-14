@@ -444,6 +444,7 @@ fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> Render
 
         let scramble_button = Button::new(left + 10.0, 240.0, 540.0,110.0, "Scramble".to_string(), "scramble".to_string(), 80.0);
         let end_button = Button::new(left + 10.0, 100.0, 540.0,110.0, "Reset Cube".to_string(), "reset".to_string(), 80.0);
+        let style_button = Button::new(left + 10.0, -40.0, 540.0,110.0, "Switch Theme".to_string(), "theme".to_string(), 70.0);
 
         let b_minus = Button::new(left + 370.0, -240.0, 80.0,80.0, "−".to_string(), "b-".to_string(), 50.0);
         let b_plus = Button::new(left + 470.0, -240.0, 80.0,80.0, "+".to_string(), "b+".to_string(), 50.0);
@@ -467,7 +468,7 @@ fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> Render
             ,texture: texture
             ,cur: (0.0,0.0)
             ,s_cur: (0.0,0.0)
-            ,buttons: RefCell::new(vec![scramble_button, end_button, b_plus, b_minus])
+            ,buttons: RefCell::new(vec![scramble_button, end_button, style_button, b_plus, b_minus])
             ,pressed: false
             ,released: false
             ,font_cache: RefCell::new(GlyphSheet::new(tex_size))
@@ -806,8 +807,11 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
                             ,"reset" => {
                                 sender.send(CancelTimer()).unwrap();
                                 sender.send(SetState(Cube::new())).unwrap();
-                            }
-                            ,"b+" => {
+                            },
+                            "theme" => {
+                                sender.send(ChangeStyle()).unwrap();
+                            },
+                            "b+" => {
                                 if data.brightness >= MAX_BRIGHTNESS - B_STEP {
                                     data.brightness = MAX_BRIGHTNESS;
                                 }
