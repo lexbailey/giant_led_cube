@@ -702,8 +702,8 @@ shader_struct!{
                 uint subface = uint(floor(pos.x));
                 uint id = face * width + subface;
                 uint mapped_id = u_mapping[id];
-                uint mapped_face = mapped_id/width;
-                uint mapped_subface = mapped_id%width;
+                uint mapped_face = mapped_id/9u;
+                uint mapped_subface = mapped_id%9u;
                 vec2 xy = get_xy(mapped_face, mapped_subface);
                 vec2 mod_px = mod(px_pos, u_facelet_px);
                 float rotation = u_rotation_map[mapped_id] * PI/2.0;
