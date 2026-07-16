@@ -60,6 +60,7 @@ struct CubeConfig{
     show_preview: Option<bool>,
     sound_enabled: Option<bool>,
     twist_duration: Option<f32>,
+    rect_size: Option<[u32;2]>,
 }
 
 enum DeviceEvent{
@@ -652,6 +653,7 @@ shader_struct!{
         uniform mat4 u_texture_transform;
         uniform float u_facelet_px;
         uniform vec2 u_facelet_coords;
+        uniform uvec2 u_rect_size;
         uniform uint u_mapping[45];
         uniform uint u_rotation_map[45];
         uniform uint u_debug_mode;
@@ -689,6 +691,8 @@ shader_struct!{
         void main() {
             // kinda nasty that this is inverted, but I'll fix it later
             FragColor = vec4(0,0,0,1.0);
+            uint width = uint(u_rect_size.x);
+            uint height = uint(u_rect_size.y);
             if (u_debug_mode == 1u) {
                 FragColor = texture(u_texture, px_pos/(u_facelet_px * vec2(12,-9)));
             }
@@ -696,18 +700,17 @@ shader_struct!{
                 vec2 pos = px_pos / u_facelet_px;
                 uint face = uint(floor(pos.y));
                 uint subface = uint(floor(pos.x));
-                uint id = face * 9u + subface;
+                uint id = face * width + subface;
                 uint mapped_id = u_mapping[id];
-                uint mapped_face = mapped_id/9u;
-                uint mapped_subface = mapped_id%9u;
+                uint mapped_face = mapped_id/width;
+                uint mapped_subface = mapped_id%width;
                 vec2 xy = get_xy(mapped_face, mapped_subface);
                 vec2 mod_px = mod(px_pos, u_facelet_px);
                 float rotation = u_rotation_map[mapped_id] * PI/2.0;
                 mat2 r = rotate2(rotation);
                 vec2 halftile = vec2(0.5,0.5) * u_facelet_px;
                 mod_px = (mod_px - halftile) * r + halftile;
-                if (px_pos.x < (u_facelet_px*9) && px_pos.y < (u_facelet_px*5)){
-                    FragColor = vec4(1.0,1.0,1.0,1.0) * float(mapped_id)/45.0;
+                if (id < 45u){
                     FragColor = texture(u_texture, ((xy * u_facelet_px) + mod_px)/(u_facelet_px * vec2(12,-9)));
                 }
             }
@@ -724,6 +727,7 @@ shader_struct!{
         u_mapping: Uniform1UIV,
         u_rotation_map: Uniform1UIV,
         u_debug_mode: Uniform1UI,
+        u_rect_size: Uniform2UI,
     }
 }
 
@@ -767,6 +771,7 @@ fn jumbotron_thread_main(
         led_map: Arc<Mutex<LedMap>>,
         calibration_mode: Arc<Mutex<bool>>,
         cube_style: Arc<Mutex<u32>>,
+        rect_size: [u32;2],
     ) {
 
     fn colour_num(c: cube_model::Colors) -> u32{
@@ -787,8 +792,8 @@ fn jumbotron_thread_main(
     let show_preview = config.show_preview.unwrap_or(false);
     let twist_duration = config.twist_duration.unwrap_or(300.0);
     // always have a 5x9 arrangement of facelets
-    let nw = 9;
-    let nh = 5;
+    let nw = rect_size[0];
+    let nh = rect_size[1];
     let net_w = 12;
     let net_h = 9;
     let width = fp * nw;
@@ -801,7 +806,7 @@ fn jumbotron_thread_main(
         winw = (winw as f32 * 1.5) as u32;
     }
 
-    println!("Starting video output...");
+    println!("Starting video output with {}x{} rectangle...", rect_size[0], rect_size[1]);
     use glfw::fail_on_errors;
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
 
@@ -1030,6 +1035,7 @@ fn jumbotron_thread_main(
             gl::Clear(gl::DEPTH_BUFFER_BIT);
         }
         mapper.use_();
+        mapper.u_rect_size.set(rect_size[0], rect_size[1]);
         mapper.u_facelet_px.set(fp as f32);
         {
             let lm = led_map.lock().unwrap();
@@ -1247,6 +1253,8 @@ fn main() {
 
     let sound_enabled = config.sound_enabled.unwrap_or(true);
 
+    let rect_size = config.rect_size.unwrap_or([9,5]);
+
     let (sender, receiver) = channel::<Event>();
     let net_sender = sender.clone();
     let dev_sender = sender.clone();
@@ -1344,7 +1352,7 @@ fn main() {
         let last_twist = last_twist.clone();
         let calibration_mode = calibration_mode.clone();
         let cube_style = cube_style.clone();
-        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist, led_map, calibration_mode, cube_style); }))
+        Some(std::thread::spawn(move||{ jumbotron_thread_main(&config, cube_state, prev_cube_state, last_twist, led_map, calibration_mode, cube_style, rect_size); }))
     } else { None };
 
     let mut gui_sender: Option<Sender<StreamEvent>> = None;
