@@ -446,8 +446,8 @@ fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> Render
         let end_button = Button::new(left + 10.0, 100.0, 540.0,110.0, "Reset Cube".to_string(), "reset".to_string(), 80.0);
         let style_button = Button::new(left + 10.0, -40.0, 540.0,110.0, "Switch Theme".to_string(), "theme".to_string(), 70.0);
 
-        let b_minus = Button::new(left + 370.0, -240.0, 80.0,80.0, "−".to_string(), "b-".to_string(), 50.0);
-        let b_plus = Button::new(left + 470.0, -240.0, 80.0,80.0, "+".to_string(), "b+".to_string(), 50.0);
+        //let b_minus = Button::new(left + 370.0, -240.0, 80.0,80.0, "−".to_string(), "b-".to_string(), 50.0);
+        //let b_plus = Button::new(left + 470.0, -240.0, 80.0,80.0, "+".to_string(), "b+".to_string(), 50.0);
 
         let mut tex_size: i32 = 0;
         gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut tex_size as *mut i32);
@@ -468,7 +468,8 @@ fn init_render_data(start_fullscreen: bool, start_w: u32,start_h: u32) -> Render
             ,texture: texture
             ,cur: (0.0,0.0)
             ,s_cur: (0.0,0.0)
-            ,buttons: RefCell::new(vec![scramble_button, end_button, style_button, b_plus, b_minus])
+            //,buttons: RefCell::new(vec![scramble_button, end_button, style_button, b_plus, b_minus])
+            ,buttons: RefCell::new(vec![scramble_button, end_button, style_button])
             ,pressed: false
             ,released: false
             ,font_cache: RefCell::new(GlyphSheet::new(tex_size))
@@ -747,7 +748,7 @@ fn ui_loop(mut gfx: RenderData, state: Arc<Mutex<ClientState>>, sender: Sender<F
             else{
                 black_text(gfx, "Giant Cube!", -1920.0/2.0, 1080.0/2.0, 150.0);
                 black_text(gfx, "⇩click to play⇩", -1920.0/2.0, 350.0, 70.0);
-                black_text(gfx, "LED Brightness", -1920.0/2.0, -240.0, 50.0);
+                //black_text(gfx, "LED Brightness", -1920.0/2.0, -240.0, 50.0);
                 let now = Instant::now();
 
                 let timer_msg = if !state.timer_state.is_started() {
