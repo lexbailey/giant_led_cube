@@ -16,7 +16,7 @@ use gl_abstractions as gla;
 use gla::{UniformMat4F, Uniform3F, Uniform4F, UniformSampler2D, shader_struct, impl_shader, ShaderPipeline};
 
 #[cfg(feature="gles")]
-use gla::UniformVec2;
+use gla::Uniform2F;
 
 pub mod client;
 use client::{start_client, ToGUI, FromGUI, ClientState};
@@ -153,11 +153,11 @@ shader_struct!{
         }
         "#
     ,{
-        u_face_transform: UniformMat4,
-        u_offset: UniformMat4,
-        u_transform: UniformMat4,
-        u_color: UniformVec3,
-        u_global_transform: UniformMat4,
+        u_face_transform: UniformMat4F,
+        u_offset: UniformMat4F,
+        u_transform: UniformMat4F,
+        u_color: Uniform3F,
+        u_global_transform: UniformMat4F,
     }
 }
 
@@ -206,15 +206,15 @@ shader_struct!{
         }
         "#
     ,{
-        u_color: UniformVec4,
+        u_color: Uniform4F,
         u_texture: UniformSampler2D,
-        u_image_geom: UniformMat4,
-        u_translate: UniformMat4,
-        u_global_transform: UniformMat4,
-        u_pix_transform: UniformMat4,
-        u_scale: UniformMat4,
-        u_glyph_select: UniformVec4,
-        u_tex_size: UniformVec2,
+        u_image_geom: UniformMat4F,
+        u_translate: UniformMat4F,
+        u_global_transform: UniformMat4F,
+        u_pix_transform: UniformMat4F,
+        u_scale: UniformMat4F,
+        u_glyph_select: Uniform4F,
+        u_tex_size: Uniform2F,
     }
 }
 
